@@ -1,0 +1,19 @@
+[package]
+name = "esmy"
+version = "0.1.0"
+authors = ["Anton Hägerstrand <anton.hagerstrand@meltwater.com>"]
+
+[dependencies]
+byteorder = "0.5"
+time = "0.1"
+
+[dev-dependencies]
+quickcheck = "0.3"
+
+[lib]
+name = "esmy"
+path = "src/lib.rs"
+
+[[bin]]
+name = "main"
+path = "src/main.rs"
