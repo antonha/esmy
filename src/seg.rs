@@ -14,19 +14,7 @@ const ID_DOC_LISTING: &'static str = "iddoc";
 
 pub type Term = [u8];
 
-pub struct FieldToStore {
-    name: String,
-    values: Vec<Vec<u8>>,
-}
-
-impl FieldToStore {
-    pub fn new(name: String, values: Vec<Vec<u8>>) -> FieldToStore {
-        FieldToStore {
-            name: name,
-            values: values
-        }
-    }
-}
+pub type FieldToStore = Vec<Vec<u8>>;
 
 pub enum FieldFlag {
     DocIndex,
@@ -35,35 +23,35 @@ pub enum FieldFlag {
 
 pub type Collector = Fn(u32) -> Result<(), Error>;
 
-pub fn write_segment(path: &Path, name: &str, docs: Vec<HashMap<String, Vec<FieldToStore>>>) -> Result<(), Error> {
+pub fn write_segment(path: &Path, name: &str, docs: Vec<HashMap<String, FieldToStore>>) -> Result<(), Error> {
     let mut term_index: HashMap<& str, BTreeMap<&Term, Vec<u32>>> = HashMap::new();
     for (docid, doc) in docs.iter().enumerate() {
-        for field in doc.iter() {
-            let mut prop_index = term_index.entry(field.name).or_insert(BTreeMap::new());
-            for term in field.values {
+        for (field_name, field_values) in doc.iter() {
+            let mut prop_index = term_index.entry(field_name).or_insert(BTreeMap::new());
+            for term in field_values {
                 let mut term_index = prop_index.entry(term).or_insert(Vec::new());
                 term_index.push(docid as u32);
             }
         }
     }
     try!(write_term_index(path, name, &term_index));
-    write_doc_vals(path, name, docs)
+    write_doc_vals(path, name, &docs)
 }
 
-pub fn write_doc_vals(path: &Path, name: &str, docs: &[&[&FieldToStore]]) -> Result<(), Error>{
+pub fn write_doc_vals(path: &Path, name: &str, docs: &Vec<HashMap<String, FieldToStore>>) -> Result<(), Error>{
     let mut di = try!(_create_segment_file(path, name, "di"));
     let mut dv = try!(_create_segment_file(path, name, "dv"));
     let mut offset: u64 = 0;
     for doc in docs{
         try!(di.write_u64::<BigEndian>(offset));
 
-        let vals = doc[0].values;
+        let ref vals = doc["f"];
         try!(dv.write_u64::<BigEndian>(vals.len() as u64));
         offset += 8;
         for val in vals{
             try!(dv.write_u64::<BigEndian>(val.len() as u64));
             offset += 8;
-            try!(dv.write_all(val));
+            try!(dv.write_all(&val));
             offset += val.len() as u64;
         }
     }
