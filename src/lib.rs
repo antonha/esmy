@@ -1,5 +1,5 @@
 
 extern crate byteorder;
-extern crate time;
+extern crate fst;
 
 pub mod seg;

@@ -6,6 +6,7 @@ authors = ["Anton Hägerstrand <anton.hagerstrand@meltwater.com>"]
 [dependencies]
 byteorder = "0.5"
 time = "0.1"
+fst = "0.1"
 
 [dev-dependencies]
 quickcheck = "0.3"
