@@ -52,7 +52,7 @@ fn main() {
     println!("\nWRITING DONE\n");
     let reader = seg::SegmentReader::new(index_path, &"foo");
     for doc in reader.doc_iter("f", b"anton").unwrap() {
-        for val in reader.read_values("f", doc.unwrap()).unwrap() {
+        for val in reader.read_values("c", doc.unwrap()).unwrap() {
             println!("{:?}", str::from_utf8(&val).unwrap());
         }
     }
