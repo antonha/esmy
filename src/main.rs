@@ -18,9 +18,9 @@ fn file_starts_with(path: &std::path::Path, prefix: &str) -> bool {
 }
 
 fn main() {
-    let index_path = std::path::Path::new("/Users/anton/dev/off/esmy/foo/index");
+    let index_path = std::path::Path::new("/home/anton/dev/off/esmy/foo/index");
     if !index_path.exists() {
-        std::fs::create_dir(&index_path).unwrap();
+        std::fs::create_dir(&index_path).unwrap()
     }
     for file in std::fs::read_dir(index_path).unwrap(){
         let path = file.unwrap().path();
@@ -45,13 +45,13 @@ fn main() {
     values: &[b"fish", b"anton"]},
     seg::Field{
         name: &"c",
-        values: &[b"dog"]
+        values: &[b"cat"]
     }]
     ]
     ).unwrap();
     println!("\nWRITING DONE\n");
     let reader = seg::SegmentReader::new(index_path, &"foo");
-    for doc in reader.doc_iter("f", b"anton").unwrap() {
+    for doc in reader.doc_iter("f", b"fish").unwrap() {
         for val in reader.read_values("c", doc.unwrap()).unwrap() {
             println!("{:?}", str::from_utf8(&val).unwrap());
         }

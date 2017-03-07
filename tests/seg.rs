@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use esmy::seg;
 
 
+
+
 quickcheck! {
     fn prop_index_(xs: Vec<HashMap<String, Vec<Vec<u8>>>>) -> bool {
         let index_path = std::path::Path::new("/Users/anton/dev/off/esmy/foo/index");
