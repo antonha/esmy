@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::fs;
 use std::path::Path;
 use std::io::Write;
 use std::io::Read;
@@ -169,6 +170,9 @@ impl<'a> SegmentBuilder<'a> {
     }
 
     fn _create_segment_file(&self, ending: &str) -> Result<File, Error> {
+        if !self.path.exists() {
+            fs::create_dir_all(self.path).unwrap()
+        }
         let name = format!("{}.{}", self.name, ending);
         File::create(self.path.join(name))
     }
@@ -296,20 +300,22 @@ pub fn read_vint(read: &mut Read) -> Result<u32, Error> {
 }
 
 
+
 #[cfg(test)]
 mod tests {
+
     use super::write_vint;
     use super::read_vint;
     use std::io::Cursor;
 
-    #[test]
-    fn vint_tests() {
-        {
+    quickcheck!{
+        fn read_write_correct(num1: u32, num2: u32) -> bool {
+            let num =  num1 * num2;
             let mut write = Cursor::new(vec![0 as u8; 100]);
-            let num = write_vint(&mut write, 3000).unwrap();
-            assert_eq!(1 as u32, num);
+            println!("{}", num);
+            write_vint(&mut write, num).unwrap();
             write.set_position(0);
-            assert_eq!(3000, read_vint(&mut write).unwrap())
+            num == read_vint(&mut write).unwrap()
         }
     }
 }

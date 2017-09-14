@@ -5,6 +5,8 @@ use esmy::seg;
 use std::str;
 use std::io::BufRead;
 use std::ops::Sub;
+use std::path::Path;
+use std::env;
 
 fn file_starts_with(path: &std::path::Path, prefix: &str) -> bool {
     match path.file_name() {
@@ -19,20 +21,17 @@ fn file_starts_with(path: &std::path::Path, prefix: &str) -> bool {
 }
 
 fn main() {
-    let index_path = std::path::Path::new("/home/anton/dev/off/esmy/foo/index");
+    let index_path = env::current_dir().unwrap().join(&Path::new("tmp/tests/index"));
+    println!("{:?}", index_path);
     if !index_path.exists() {
-        std::fs::create_dir(&index_path).unwrap()
-    }
-    for file in std::fs::read_dir(index_path).unwrap() {
-        let path = file.unwrap().path();
-        std::fs::remove_file(path).unwrap();
+        std::fs::create_dir_all(&index_path).unwrap()
     }
     let f = std::fs::File::open("/usr/share/dict/american-english").unwrap();
     let file = std::io::BufReader::new(&f);
     let words = file.lines().map(|l| l.unwrap());
 
     let start_index = time::now();
-    let index = seg::Index::new(index_path);
+    let index = seg::Index::new(&index_path);
     let mut builder = index.new_segment();
     for word in words {
         builder.add_doc(vec![seg::Field {

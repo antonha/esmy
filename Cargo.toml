@@ -9,8 +9,6 @@ time = "0.1"
 fst = "0.1"
 rand = "0.3"
 walkdir = "1"
-
-[dev-dependencies]
 quickcheck = "0.3"
 
 [lib]
