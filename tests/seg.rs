@@ -29,16 +29,19 @@ mod tests {
             if index_path.exists() {
                 fs::remove_dir_all(&index_path);
             }
+
+            let mut fields : HashMap<String, Vec<String>> = HashMap::new();
+            fields.insert(String::from("value"), vec![]);
+            fields.insert(String::from("key"), vec![]);
             
-            println!("{:?}", index_path);
-            let index = seg::Index::new(&index_path);
+            let index = seg::Index::new(seg::IndexConfig{fields: fields}, &index_path);
             {
                 let mut builder = index.new_segment();
                 for (key, value) in docs.iter(){
                     builder.add_doc(
                         vec![
-                            seg::Field {name: "key",values: vec![seg::FieldValue::StringField(key.clone())]},
-                            seg::Field {name: "value",values: vec![seg::FieldValue::StringField(value.clone())]},
+                            seg::Field {name: "key",value: seg::FieldValue::StringField(vec![key.clone()])},
+                            seg::Field {name: "value",value: seg::FieldValue::StringField(vec![value.clone()])},
                         ]);
                 }
                 builder.commit().unwrap();

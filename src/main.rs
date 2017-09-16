@@ -7,6 +7,7 @@ use std::io::BufRead;
 use std::ops::Sub;
 use std::path::Path;
 use std::env;
+use std::collections::HashMap;
 
 fn file_starts_with(path: &std::path::Path, prefix: &str) -> bool {
     match path.file_name() {
@@ -31,12 +32,12 @@ fn main() {
     let words = file.lines().map(|l| l.unwrap());
 
     let start_index = time::now();
-    let index = seg::Index::new(&index_path);
+    let index = seg::Index::new(seg::IndexConfig { fields: HashMap::new() }, &index_path);
     let mut builder = index.new_segment();
     for word in words {
         builder.add_doc(vec![seg::Field {
                                  name: "f",
-                                 values: vec![seg::FieldValue::StringField(word)],
+                                 value: seg::FieldValue::StringField(vec![word]),
                              }]);
     }
     println!("Indexing took: {0}",

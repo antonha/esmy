@@ -9,6 +9,7 @@ use std::io::Error;
 use std::collections::HashSet;
 use std::io::BufWriter;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use rand::{self, Rng};
 use walkdir::{WalkDir, WalkDirIterator};
@@ -19,17 +20,26 @@ use fst::{Map, MapBuilder};
 const TERM_ID_LISTING: &'static str = "tid";
 const ID_DOC_LISTING: &'static str = "iddoc";
 
+
+pub struct IndexConfig {
+    pub fields: HashMap<String, Vec<String>>,
+}
+
 pub struct Index<'a> {
+    config: IndexConfig,
     path: &'a Path,
 }
 
 impl<'a> Index<'a> {
-    pub fn new(path: &'a Path) -> Index {
-        Index { path: path }
+    pub fn new(config: IndexConfig, path: &'a Path) -> Index {
+        Index {
+            config: config,
+            path: path,
+        }
     }
 
     pub fn new_segment(&self) -> SegmentBuilder {
-        SegmentBuilder::new(self.path, random_name())
+        SegmentBuilder::new(&self.config, self.path, random_name())
     }
 
     pub fn segment_readers(&self) -> Vec<SegmentReader> {
@@ -62,13 +72,13 @@ fn random_name() -> String {
 
 #[derive(Debug)]
 pub enum FieldValue {
-    StringField(String),
+    StringField(Vec<String>),
 }
 
 #[derive(Debug)]
 pub struct Field<'a> {
     pub name: &'a str,
-    pub values: Vec<FieldValue>,
+    pub value: FieldValue,
 }
 
 pub type Doc<'a> = Vec<Field<'a>>;
@@ -77,11 +87,13 @@ pub struct SegmentBuilder<'a> {
     path: &'a Path,
     name: String,
     docs: Vec<Doc<'a>>,
+    config: &'a IndexConfig,
 }
 
 impl<'a> SegmentBuilder<'a> {
-    pub fn new(path: &'a Path, name: String) -> SegmentBuilder<'a> {
+    pub fn new(config: &'a IndexConfig, path: &'a Path, name: String) -> SegmentBuilder<'a> {
         SegmentBuilder {
+            config: config,
             path: path,
             name: name,
             docs: Vec::new(),
@@ -93,13 +105,7 @@ impl<'a> SegmentBuilder<'a> {
     }
 
     pub fn commit(&self) -> Result<(), Error> {
-        let mut field_names: HashSet<&str> = HashSet::new();
-        for doc in self.docs.iter() {
-            for field in doc.iter() {
-                field_names.insert(&field.name);
-            }
-        }
-        for field in field_names {
+        for field in self.config.fields.keys() {
             self.write_term_index(field)?;
             self.write_doc_vals(field)?;
         }
@@ -111,15 +117,15 @@ impl<'a> SegmentBuilder<'a> {
         let mut value_to_docs: BTreeMap<&String, Vec<u32>> = BTreeMap::new();
         {
             for (doc_id, doc) in self.docs.iter().enumerate() {
-                for field_values in doc.iter().filter(|f| f.name == field) {
-                    for field_value in field_values.values.iter() {
-                        match field_value {
-                            &FieldValue::StringField(ref value) => {
+                for field in doc.iter().filter(|f| f.name == field) {
+                    match field.value {
+                        FieldValue::StringField(ref values) => {
+                            for value in values {
                                 value_to_docs.entry(&value).or_insert(Vec::new()).push(doc_id as
-                                                                                       u32)
+                                                                                       u32);
                             }
-                        };
-                    }
+                        }
+                    };
                 }
             }
         }
@@ -148,16 +154,16 @@ impl<'a> SegmentBuilder<'a> {
             for doc_field in doc.iter() {
                 if doc_field.name == field {
                     di.write_u64::<BigEndian>(offset)?;
-                    let ref vals = doc_field.values;
-                    dv.write_u64::<BigEndian>(vals.len() as u64)?;
-                    offset += 8;
-                    for val in vals.iter() {
-                        match val {
-                            &FieldValue::StringField(ref value) => {
-                                dv.write_u64::<BigEndian>(value.len() as u64)?;
+                    let ref val = doc_field.value;
+                    match val {
+                        &FieldValue::StringField(ref vals) => {
+                            dv.write_u64::<BigEndian>(vals.len() as u64)?;
+                            offset += 8;
+                            for val in vals.iter() {
+                                dv.write_u64::<BigEndian>(val.len() as u64)?;
                                 offset += 8;
-                                dv.write((value).as_bytes())?;
-                                offset += value.len() as u64;
+                                dv.write((val).as_bytes())?;
+                                offset += val.len() as u64;
                             }
                         }
                     }
@@ -248,12 +254,12 @@ impl<'a> SegmentReader<'a> {
         let mut di = self._open_segment_file(&format!("{}.{}", field, "di"))?;
         di.seek(SeekFrom::Start(docid as u64 * 8))?;
         let offset = di.read_u64::<BigEndian>()?;
+
         let mut dv = self._open_segment_file(&format!("{}.{}", field, "dv"))?;
         dv.seek(SeekFrom::Start(offset))?;
 
         let num_values = dv.read_u64::<BigEndian>()?;
 
-        //TODO: Vector alloc.. meh
         let mut ret = Vec::with_capacity(num_values as usize);
         for _ in 0..num_values {
             let val_length = dv.read_u64::<BigEndian>()?;
