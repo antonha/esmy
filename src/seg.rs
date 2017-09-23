@@ -1,79 +1,150 @@
-use std::fs::File;
-use std::fs;
-use std::path::Path;
-use std::io::Write;
-use std::io::Read;
-use std::io::SeekFrom;
-use std::io::Seek;
-use std::io::Error;
-use std::collections::HashSet;
-use std::io::BufWriter;
-use std::collections::BTreeMap;
-use std::collections::HashMap;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use rand::{self, Rng};
-use walkdir::{WalkDir, WalkDirIterator};
-
-
 use fst::{Map, MapBuilder};
+// use memmap::{Mmap, Protection};
+use rand::{self, Rng};
+use std::any::{Any, TypeId};
+use std::collections::BTreeMap;
+use std::fs::{self, File};
+use std::io::{BufWriter, Error, Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
+use walkdir::{WalkDir, WalkDirIterator};
 
 const TERM_ID_LISTING: &'static str = "tid";
 const ID_DOC_LISTING: &'static str = "iddoc";
 
+pub trait FeatureReader {
+    fn as_any(&self) -> &Any;
+}
 
-pub struct IndexConfig {
-    pub fields: HashMap<String, Vec<String>>,
+pub trait Feature: FeatureClone {
+    fn as_any(&self) -> &Any;
+    fn write_segment(&self, address: &SegmentAddress, docs: &Vec<Doc>) -> Result<(), Error>;
+    fn reader<'a>(&self, address: SegmentAddress) -> Box<FeatureReader>;
+}
+
+pub trait FeatureClone {
+    fn clone_box(&self) -> Box<Feature>;
+}
+impl<T> FeatureClone for T
+where
+    T: 'static + Feature + Clone,
+{
+    fn clone_box(&self) -> Box<Feature> {
+        Box::new(self.clone())
+    }
+}
+
+impl Clone for Box<Feature> {
+    fn clone(&self) -> Box<Feature> {
+        self.clone_box()
+    }
+}
+
+#[derive(Clone)]
+pub struct SegmentSchema {
+    pub features: Vec<Box<Feature>>,
+}
+
+#[derive(Clone)]
+pub struct SegmentAddress {
+    path: PathBuf,
+    name: String,
 }
 
 pub struct Index<'a> {
-    config: IndexConfig,
+    schema_template: SegmentSchema,
     path: &'a Path,
 }
 
+impl SegmentAddress {
+    fn create_file(&self, ending: &str) -> Result<File, Error> {
+        if !self.path.exists() {
+            fs::create_dir_all(&self.path).unwrap();
+        }
+        let name = format!("{}.{}", self.name, ending);
+        File::create(self.path.join(name))
+    }
+
+    fn open_file(&self, ending: &str) -> Result<File, Error> {
+        let name = format!("{}.{}", self.name, ending);
+        let file = self.path.join(name);
+        File::open(file)
+    }
+}
+
+
 impl<'a> Index<'a> {
-    pub fn new(config: IndexConfig, path: &'a Path) -> Index {
+    pub fn new(schema_template: SegmentSchema, path: &'a Path) -> Index<'a> {
         Index {
-            config: config,
-            path: path,
+            schema_template,
+            path,
         }
     }
 
     pub fn new_segment(&self) -> SegmentBuilder {
-        SegmentBuilder::new(&self.config, self.path, random_name())
+        SegmentBuilder::new(
+            self.schema_template.clone(),
+            SegmentAddress {
+                path: PathBuf::from(self.path),
+                name: self::random_name(),
+            },
+        )
     }
 
-    pub fn segment_readers(&self) -> Vec<SegmentReader> {
-        let walker = WalkDir::new(self.path).min_depth(1).max_depth(1).into_iter();
+    pub fn open_reader(&self) -> IndexReader {
+        let walker = WalkDir::new(self.path)
+            .min_depth(1)
+            .max_depth(1)
+            .into_iter();
         let entries = walker.filter_entry(|e| {
             e.file_type().is_dir() ||
-            e.file_name()
-                .to_str()
-                .map(|s| s.ends_with(".seg"))
-                .unwrap_or(false)
+                e.file_name()
+                    .to_str()
+                    .map(|s| s.ends_with(".seg"))
+                    .unwrap_or(false)
         });
-        entries.map(|e| {
-                let name = String::from(e.unwrap()
-                                            .file_name()
-                                            .to_str()
-                                            .unwrap()
-                                            .split(".")
-                                            .next()
-                                            .unwrap());
-                SegmentReader::new(self.path, name)
+        let segments = entries
+            .map(|e| {
+                let name = String::from(
+                    e.unwrap()
+                        .file_name()
+                        .to_str()
+                        .unwrap()
+                        .split(".")
+                        .next()
+                        .unwrap(),
+                );
+                let address = SegmentAddress {
+                    path: PathBuf::from(self.path),
+                    name: name,
+                };
+                SegmentReader::new(self.schema_template.clone(), address)
             })
-            .collect::<Vec<SegmentReader>>()
+            .collect::<Vec<SegmentReader>>();
+        IndexReader { segment_readers: segments }
     }
 }
+
+pub struct IndexReader {
+    segment_readers: Vec<SegmentReader>,
+}
+
+impl IndexReader {
+    pub fn segment_readers(&self) -> &[SegmentReader] {
+        &self.segment_readers
+    }
+}
+
 
 fn random_name() -> String {
     rand::thread_rng().gen_ascii_chars().take(10).collect()
 }
 
-
 #[derive(Debug)]
 pub enum FieldValue {
     StringField(Vec<String>),
 }
+
 
 #[derive(Debug)]
 pub struct Field<'a> {
@@ -84,18 +155,16 @@ pub struct Field<'a> {
 pub type Doc<'a> = Vec<Field<'a>>;
 
 pub struct SegmentBuilder<'a> {
-    path: &'a Path,
-    name: String,
+    schema: SegmentSchema,
+    address: SegmentAddress,
     docs: Vec<Doc<'a>>,
-    config: &'a IndexConfig,
 }
 
 impl<'a> SegmentBuilder<'a> {
-    pub fn new(config: &'a IndexConfig, path: &'a Path, name: String) -> SegmentBuilder<'a> {
+    pub fn new(schema: SegmentSchema, address: SegmentAddress) -> SegmentBuilder<'a> {
         SegmentBuilder {
-            config: config,
-            path: path,
-            name: name,
+            address,
+            schema,
             docs: Vec::new(),
         }
     }
@@ -105,24 +174,94 @@ impl<'a> SegmentBuilder<'a> {
     }
 
     pub fn commit(&self) -> Result<(), Error> {
-        for field in self.config.fields.keys() {
-            self.write_term_index(field)?;
-            self.write_doc_vals(field)?;
+        for feature in &self.schema.features {
+            feature.write_segment(&self.address, &self.docs);
         }
-        try!(self._create_segment_file("seg"));
+        self.address.create_file("seg")?;
         Ok(())
     }
+}
 
-    fn write_term_index(&self, field: &str) -> Result<(), Error> {
+
+pub struct SegmentReader {
+    address: SegmentAddress,
+    readers: Vec<Box<FeatureReader>>,
+}
+
+impl SegmentReader {
+    pub fn new(schema: SegmentSchema, address: SegmentAddress) -> SegmentReader {
+        SegmentReader {
+            address: address.clone(),
+            readers: schema
+                .features
+                .into_iter()
+                .map(|feature| feature.reader(address.clone()))
+                .collect(),
+        }
+    }
+
+    pub fn string_index(&self, field_name: &str) -> Option<&StringIndexReader>{
+        for reader in self.readers.iter(){
+            match reader.as_any().downcast_ref::<StringIndexReader>(){
+                Some(reader) => {
+                    if reader.feature.field_name == field_name{
+                        return Some(reader);
+                    }
+                }
+                None => ()
+            }
+        }
+        return None
+    }
+    
+    pub fn string_values(&self, field_name: &str) -> Option<&StringValueReader>{
+        for reader in self.readers.iter(){
+            match reader.as_any().downcast_ref::<StringValueReader>(){
+                Some(reader) => {
+                    if reader.feature.field_name == field_name{
+                        return Some(reader);
+                    }
+                }
+                None => ()
+            }
+        }
+        return None
+    }
+}
+
+
+#[derive(Clone)]
+pub struct StringIndex {
+    field_name: String,
+}
+
+impl StringIndex{
+    pub fn new<T> (field_name: T) -> StringIndex
+        where T: Into<String> 
+    {
+        StringIndex{field_name: field_name.into()}
+    }
+}
+
+impl<'a> Feature for StringIndex {
+
+
+    fn as_any(&self) -> &Any {
+        self
+    }
+
+    fn write_segment(&self, address: &SegmentAddress, docs: &Vec<Doc>) -> Result<(), Error> {
         let mut value_to_docs: BTreeMap<&String, Vec<u32>> = BTreeMap::new();
         {
-            for (doc_id, doc) in self.docs.iter().enumerate() {
-                for field in doc.iter().filter(|f| f.name == field) {
+            for (doc_id, doc) in docs.iter().enumerate() {
+                for field in doc.iter().filter(|f| f.name == &self.field_name) {
                     match field.value {
                         FieldValue::StringField(ref values) => {
                             for value in values {
-                                value_to_docs.entry(&value).or_insert(Vec::new()).push(doc_id as
-                                                                                       u32);
+                                value_to_docs.entry(&value).or_insert(Vec::new()).push(
+                                    doc_id as
+                                        u32,
+                                );
                             }
                         }
                     };
@@ -130,10 +269,14 @@ impl<'a> SegmentBuilder<'a> {
             }
         }
         let mut offset: u64 = 0;
-        let tid = self._create_segment_file(&format!("{}.{}", field, TERM_ID_LISTING))?;
+        let tid = address.create_file(
+            &format!("{}.{}", &self.field_name, TERM_ID_LISTING),
+        )?;
         //TODO: Not unwrap
         let mut tid_builder = MapBuilder::new(BufWriter::new(tid)).unwrap();
-        let mut iddoc = self._create_segment_file(&format!("{}.{}", field, ID_DOC_LISTING))?;
+        let mut iddoc = address.create_file(
+            &format!("{}.{}", self.field_name, ID_DOC_LISTING),
+        )?;
         for (term, ids) in value_to_docs.iter() {
             tid_builder.insert(term, offset).unwrap();
             offset += write_vint(&mut iddoc, ids.len() as u32)? as u64;
@@ -146,13 +289,110 @@ impl<'a> SegmentBuilder<'a> {
         Ok(())
     }
 
-    fn write_doc_vals(&self, field: &str) -> Result<(), Error> {
+    fn reader(&self, address: SegmentAddress) -> Box<FeatureReader> {
+        let path = address.path.join(format!(
+            "{}.{}.{}",
+            address.name,
+            self.field_name,
+            TERM_ID_LISTING
+        ));
+        Box::new({
+            StringIndexReader {
+                feature: self.clone(),
+                address: address,
+                map: Map::from_path(path).unwrap()
+            }
+        })
+    }
+}
+
+pub struct StringIndexReader {
+    feature: StringIndex,
+    address: SegmentAddress,
+    map: Map
+}
+
+impl FeatureReader for StringIndexReader {
+    fn as_any(&self) -> &Any{
+        self
+    }
+}
+
+impl StringIndexReader {
+    pub fn doc_iter(&self, field: &str, term: &str) -> Result<DocIter, Error> {
+        let maybe_offset = self.term_offset(field, term)?;
+        let mut iddoc = self.address.open_file(
+            &format!("{}.{}", field, ID_DOC_LISTING),
+        )?;
+        match maybe_offset {
+            None => {
+                Ok(DocIter {
+                    file: iddoc,
+                    left: 0,
+                })
+            }
+            Some(offset) => {
+                iddoc.seek(SeekFrom::Start(offset as u64))?;
+                let num = read_vint(&mut iddoc)?;
+                Ok(DocIter {
+                    file: iddoc,
+                    left: num,
+                })
+            }
+        }
+    }
+
+    fn term_offset(&self, field: &str, term: &str) -> Result<Option<u64>, Error> {
+        return Ok(self.map.get(term));
+    }
+}
+
+pub struct DocIter {
+    file: File,
+    left: u32,
+}
+
+impl Iterator for DocIter {
+    type Item = Result<u32, Error>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.left != 0 {
+            self.left -= 1;
+            Some(read_vint(&mut self.file))
+        } else {
+            None
+        }
+    }
+}
+
+
+#[derive(Clone)]
+pub struct StringValues {
+    field_name: String,
+}
+
+impl StringValues {
+    pub fn new<T> (field_name: T) -> StringValues
+        where T: Into<String> {
+        StringValues{field_name: field_name.into()}
+    }
+}
+
+impl Feature for StringValues {
+    fn as_any(&self) -> &Any {
+        self
+    }
+
+    fn write_segment(&self, address: &SegmentAddress, docs: &Vec<Doc>) -> Result<(), Error> {
         let mut offset: u64 = 0;
-        let mut di = self._create_segment_file(&format!("{}.{}", field, "di"))?;
-        let mut dv = self._create_segment_file(&format!("{}.{}", field, "dv"))?;
-        for doc in self.docs.iter() {
+        let mut di = address.create_file(
+            &format!("{}.{}", self.field_name, "di"),
+        )?;
+        let mut dv = address.create_file(
+            &format!("{}.{}", self.field_name, "dv"),
+        )?;
+        for doc in docs {
             for doc_field in doc.iter() {
-                if doc_field.name == field {
+                if doc_field.name == &self.field_name {
                     di.write_u64::<BigEndian>(offset)?;
                     let ref val = doc_field.value;
                     match val {
@@ -175,87 +415,38 @@ impl<'a> SegmentBuilder<'a> {
         Ok(())
     }
 
-    fn _create_segment_file(&self, ending: &str) -> Result<File, Error> {
-        if !self.path.exists() {
-            fs::create_dir_all(self.path).unwrap()
-        }
-        let name = format!("{}.{}", self.name, ending);
-        File::create(self.path.join(name))
-    }
-}
-
-
-pub struct SegmentReader<'a> {
-    name: String,
-    path: &'a Path,
-}
-
-#[derive(Debug)]
-pub struct DocIter {
-    file: File,
-    left: u32,
-}
-
-impl Iterator for DocIter {
-    type Item = Result<u32, Error>;
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.left != 0 {
-            self.left -= 1;
-            Some(read_vint(&mut self.file))
-        } else {
-            None
-        }
-    }
-}
-
-impl<'a> SegmentReader<'a> {
-    pub fn new(path: &'a Path, name: String) -> SegmentReader<'a> {
-        SegmentReader {
-            name: name,
-            path: path,
-        }
-    }
-
-    pub fn doc_iter(&self, field: &str, term: &[u8]) -> Result<DocIter, Error> {
-        let maybe_offset = self.term_offset(field, term)?;
-        let mut iddoc = self._open_segment_file(&format!("{}.{}", field, ID_DOC_LISTING))?;
-        match maybe_offset {
-            None => {
-                Ok(DocIter {
-                       file: iddoc,
-                       left: 0,
-                   })
+    fn reader<'b>(&self, address: SegmentAddress) -> Box<FeatureReader> {
+        Box::new({
+            StringValueReader {
+                feature: self.clone(),
+                address: address,
             }
-            Some(offset) => {
-                iddoc.seek(SeekFrom::Start(offset as u64))?;
-                let num = read_vint(&mut iddoc)?;
-                Ok(DocIter {
-                       file: iddoc,
-                       left: num,
-                   })
-            }
-        }
+        })
     }
+}
 
-    fn term_offset(self: &SegmentReader<'a>,
-                   field: &str,
-                   term: &[u8])
-                   -> Result<Option<u64>, Error> {
-        let map =
-            Map::from_path(self.path.join(format!("{}.{}.{}", self.name, field, TERM_ID_LISTING)))
-                .unwrap();
-        return Ok(map.get(term));
+pub struct StringValueReader {
+    feature: StringValues,
+    address: SegmentAddress,
+}
+
+impl FeatureReader for StringValueReader {
+    fn as_any(&self) -> &Any{
+        self
     }
+}
 
-    pub fn read_values(self: &SegmentReader<'a>,
-                       field: &str,
-                       docid: u32)
-                       -> Result<Vec<Vec<u8>>, Error> {
-        let mut di = self._open_segment_file(&format!("{}.{}", field, "di"))?;
+impl StringValueReader {
+    pub fn read_values(&self, docid: u32) -> Result<Vec<Vec<u8>>, Error> {
+        let mut di = self.address.open_file(
+            &format!("{}.{}", self.feature.field_name, "di"),
+        )?;
         di.seek(SeekFrom::Start(docid as u64 * 8))?;
         let offset = di.read_u64::<BigEndian>()?;
 
-        let mut dv = self._open_segment_file(&format!("{}.{}", field, "dv"))?;
+        let mut dv = self.address.open_file(
+            &format!("{}.{}", self.feature.field_name, "dv"),
+        )?;
         dv.seek(SeekFrom::Start(offset))?;
 
         let num_values = dv.read_u64::<BigEndian>()?;
@@ -272,12 +463,6 @@ impl<'a> SegmentReader<'a> {
             ret.push(value)
         }
         Ok(ret)
-    }
-
-    fn _open_segment_file(self: &SegmentReader<'a>, ending: &str) -> Result<File, Error> {
-        let name = format!("{}.{}", self.name, ending);
-        let file = self.path.join(name);
-        File::open(file)
     }
 }
 
@@ -310,8 +495,8 @@ pub fn read_vint(read: &mut Read) -> Result<u32, Error> {
 #[cfg(test)]
 mod tests {
 
-    use super::write_vint;
     use super::read_vint;
+    use super::write_vint;
     use std::io::Cursor;
 
     quickcheck!{

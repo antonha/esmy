@@ -1,13 +1,14 @@
 extern crate esmy;
 extern crate time;
 
-use esmy::seg;
-use std::str;
+use esmy::seg::{self,Field,StringIndex,StringValues};
+use std::collections::HashMap;
+use std::env;
 use std::io::BufRead;
 use std::ops::Sub;
 use std::path::Path;
-use std::env;
-use std::collections::HashMap;
+use std::fs::File;
+use std::str;
 
 fn file_starts_with(path: &std::path::Path, prefix: &str) -> bool {
     match path.file_name() {
@@ -32,7 +33,11 @@ fn main() {
     let words = file.lines().map(|l| l.unwrap());
 
     let start_index = time::now();
-    let index = seg::Index::new(seg::IndexConfig { fields: HashMap::new() }, &index_path);
+    let features : Vec<Box<seg::Feature>> = vec![
+        Box::new(StringIndex::new("value")),
+        Box::new(StringValues::new("key")),
+    ];
+    let index = seg::Index::new(seg::SegmentSchema { features}, &index_path);
     let mut builder = index.new_segment();
     for word in words {
         builder.add_doc(vec![seg::Field {
@@ -44,18 +49,22 @@ fn main() {
              time::now().sub(start_index).num_milliseconds());
     builder.commit().unwrap();
 
-    let readers = index.segment_readers();
+    let indexReader = index.open_reader();
+    let readers = &indexReader.segment_readers();
     let ref reader = &readers[0];
 
     let f2 = std::fs::File::open("/usr/share/dict/american-english").unwrap();
     let file2 = std::io::BufReader::new(&f2);
     let words2 = file2.lines().take(100000).map(|l| l.unwrap());
     let start_search = time::now();
+    let mut i : u32= 0;
     for w2 in words2 {
-        for doc in reader.doc_iter("f", w2.as_bytes()).unwrap() {
+        i+= 1;
+        for doc in reader.string_index("value").unwrap().doc_iter("value", &w2).unwrap() {
             let _docid = doc.unwrap();
         }
     }
-    println!("Searching took: {0}",
+    println!("Searching took ({0}): {1}",
+            i,
              time::now().sub(start_search).num_milliseconds());
 }

@@ -5,13 +5,13 @@ extern crate esmy;
 
 #[cfg(test)]
 mod tests {
+    use esmy::seg::{self,StringIndex,StringValues};
+    use quickcheck::TestResult;
     use std::collections::HashMap;
-    use esmy::seg;
+    use std::env;
+    use std::fs;
     use std::path::Path;
     use std::str::from_utf8;
-    use std::fs;
-    use std::env;
-    use quickcheck::TestResult;
     quickcheck! {
         fn finds(docs: HashMap<String, String>) -> TestResult {
             if docs.is_empty() {
@@ -24,17 +24,15 @@ mod tests {
                 return TestResult::discard();
             }
 
-
             let index_path = env::current_dir().unwrap().join(&Path::new("tmp/tests/index"));
             if index_path.exists() {
                 fs::remove_dir_all(&index_path);
             }
-
-            let mut fields : HashMap<String, Vec<String>> = HashMap::new();
-            fields.insert(String::from("value"), vec![]);
-            fields.insert(String::from("key"), vec![]);
-            
-            let index = seg::Index::new(seg::IndexConfig{fields: fields}, &index_path);
+            let features : Vec<Box<seg::Feature>> = vec![
+                Box::new(StringIndex::new("value")),
+                Box::new(StringValues::new("key")),
+            ];
+            let index = seg::Index::new(seg::SegmentSchema{features}, &index_path);
             {
                 let mut builder = index.new_segment();
                 for (key, value) in docs.iter(){
@@ -46,12 +44,12 @@ mod tests {
                 }
                 builder.commit().unwrap();
             }
-            let readers = index.segment_readers();
-            let ref reader = readers[0];
+            let indexReader = index.open_reader();
+            let ref reader = &indexReader.segment_readers()[0];
             for (key, value) in docs.iter() {
-                for doc in reader.doc_iter("value", &value.as_bytes()).unwrap() {
+                for doc in reader.string_index("value").unwrap().doc_iter("value", &value).unwrap() {
                     let docid = doc.unwrap();
-                    let actual_keys = reader.read_values("key", docid).unwrap();
+                    let actual_keys = reader.string_values("key").unwrap().read_values(docid).unwrap();
                     let actual_key = &actual_keys[0];
                     if from_utf8(&actual_key).unwrap() != key {
                         return TestResult::failed();
