@@ -1,8 +1,9 @@
 
 use unicode_segmentation::UnicodeSegmentation;
+use std::borrow::Cow;
 
 pub trait Analyzer : AnalyzerClone{
-    fn analyze<'a>(&self, value: &'a str) -> Box<Iterator<Item=&'a str> +'a>;
+    fn analyze<'a>(&self, value: &'a str) -> Box<Iterator<Item=Cow<'a, str>> +'a>;
 }
 
 pub trait AnalyzerClone {
@@ -28,9 +29,17 @@ pub struct UAX29Analyzer{
 }
 
 impl Analyzer for UAX29Analyzer{
-    fn analyze<'a>(&self, value: &'a str) -> Box<Iterator<Item=&'a str> + 'a>{
+    fn analyze<'a>(&self, value: &'a str) -> Box<Iterator<Item=Cow<'a, str>> +'a>{
         Box::from(value.split_word_bounds()
-                  .filter(|token| !is_only_whitespace_or_control_char(token)))
+                  .filter(|token| !is_only_whitespace_or_control_char(token))
+                  .map(|token| 
+                       if token.find(char::is_uppercase).is_some(){
+                           Cow::Owned(token.to_lowercase())
+                       }
+                       else{
+                           Cow::Borrowed(token)
+                       }
+                       ))
     }
 }
 

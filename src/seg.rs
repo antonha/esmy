@@ -10,6 +10,7 @@ use std::io::{self, BufWriter, Error, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use walkdir::{WalkDir, WalkDirIterator};
 use analyzis::Analyzer;
+use std::borrow::Cow;
 
 const TERM_ID_LISTING: &'static str = "tid";
 const ID_DOC_LISTING: &'static str = "iddoc";
@@ -327,12 +328,13 @@ impl StringIndex {
 }
 
 impl<'a> Feature for StringIndex {
+
     fn as_any(&self) -> &Any {
         self
     }
 
     fn write_segment(&self, address: &SegmentAddress, docs: &Vec<Doc>) -> Result<(), Error> {
-        let mut value_to_docs: BTreeMap<&str, Vec<u64>> = BTreeMap::new();
+        let mut value_to_docs: BTreeMap<Cow<str>, Vec<u64>> = BTreeMap::new();
         {
             for (doc_id, doc) in docs.iter().enumerate() {
                 for field in doc.iter().filter(|f| f.name == &self.field_name) {
@@ -340,7 +342,7 @@ impl<'a> Feature for StringIndex {
                         FieldValue::StringField(ref values) => {
                             for value in values {
                                 for token in self.analyzer.analyze(&value){
-                                    value_to_docs.entry(&token).or_insert(Vec::new()).push(
+                                    value_to_docs.entry(token).or_insert(Vec::new()).push(
                                         doc_id as
                                         u64,
                                         );
@@ -361,7 +363,7 @@ impl<'a> Feature for StringIndex {
             &format!("{}.{}", self.field_name, ID_DOC_LISTING),
         )?;
         for (term, ids) in value_to_docs {
-            tid_builder.insert(term, offset).unwrap();
+            tid_builder.insert(&term.as_bytes(), offset).unwrap();
             offset += write_vint(&mut iddoc, ids.len() as u64)? as u64;
             for id in ids.iter() {
                 offset += write_vint(&mut iddoc, *id)? as u64;

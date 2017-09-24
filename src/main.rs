@@ -61,7 +61,7 @@ fn main() {
             for doc in reader
                 .string_index("value")
                     .unwrap()
-                    .doc_iter("value", w2)
+                    .doc_iter("value", &w2)
                     .unwrap()
                     {
                         let docid = doc.unwrap();
