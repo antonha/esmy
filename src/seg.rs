@@ -9,6 +9,7 @@ use std::fs::{self, File};
 use std::io::{self, BufWriter, Error, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use walkdir::{WalkDir, WalkDirIterator};
+use analyzis::Analyzer;
 
 const TERM_ID_LISTING: &'static str = "tid";
 const ID_DOC_LISTING: &'static str = "iddoc";
@@ -313,14 +314,15 @@ impl SegmentReader {
 #[derive(Clone)]
 pub struct StringIndex {
     field_name: String,
+    analyzer: Box<Analyzer>
 }
 
 impl StringIndex {
-    pub fn new<T>(field_name: T) -> StringIndex
+    pub fn new<T>(field_name: T, analyzer: Box<Analyzer>) -> StringIndex
     where
         T: Into<String>,
     {
-        StringIndex { field_name: field_name.into() }
+        StringIndex { field_name: field_name.into(), analyzer}
     }
 }
 
@@ -330,17 +332,19 @@ impl<'a> Feature for StringIndex {
     }
 
     fn write_segment(&self, address: &SegmentAddress, docs: &Vec<Doc>) -> Result<(), Error> {
-        let mut value_to_docs: BTreeMap<&String, Vec<u64>> = BTreeMap::new();
+        let mut value_to_docs: BTreeMap<&str, Vec<u64>> = BTreeMap::new();
         {
             for (doc_id, doc) in docs.iter().enumerate() {
                 for field in doc.iter().filter(|f| f.name == &self.field_name) {
                     match field.value {
                         FieldValue::StringField(ref values) => {
                             for value in values {
-                                value_to_docs.entry(&value).or_insert(Vec::new()).push(
-                                    doc_id as
+                                for token in self.analyzer.analyze(&value){
+                                    value_to_docs.entry(&token).or_insert(Vec::new()).push(
+                                        doc_id as
                                         u64,
-                                );
+                                        );
+                                }
                             }
                         }
                     };
