@@ -1,16 +1,17 @@
+
+use analyzis::Analyzer;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use fst::{Map, MapBuilder, Streamer};
 use fst::map::OpBuilder;
 // use memmap::{Mmap, Protection};
 use rand::{self, Rng};
 use std::any::Any;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Error, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use walkdir::{WalkDir, WalkDirIterator};
-use analyzis::Analyzer;
-use std::borrow::Cow;
 
 const TERM_ID_LISTING: &'static str = "tid";
 const ID_DOC_LISTING: &'static str = "iddoc";
@@ -85,7 +86,7 @@ impl SegmentAddress {
         let file = self.path.join(name);
         File::open(file)
     }
-    
+
     fn remove_file(&self, ending: &str) -> Result<(), Error> {
         let name = format!("{}.{}", self.name, ending);
         let file = self.path.join(name);
@@ -199,7 +200,7 @@ impl<'a> Index<'a> {
         let doc_count: u64 = infos.iter().map(|i| i.doc_count).sum();
         let mut file = new_segment_address.create_file("seg")?;
         write_vint(&mut file, doc_count)?;
-        for address in addresses{
+        for address in addresses {
             address.remove_file("seg")?;
         }
         Ok(())
@@ -315,7 +316,7 @@ impl SegmentReader {
 #[derive(Clone)]
 pub struct StringIndex {
     field_name: String,
-    analyzer: Box<Analyzer>
+    analyzer: Box<Analyzer>,
 }
 
 impl StringIndex {
@@ -323,12 +324,14 @@ impl StringIndex {
     where
         T: Into<String>,
     {
-        StringIndex { field_name: field_name.into(), analyzer}
+        StringIndex {
+            field_name: field_name.into(),
+            analyzer,
+        }
     }
 }
 
 impl<'a> Feature for StringIndex {
-
     fn as_any(&self) -> &Any {
         self
     }
@@ -341,11 +344,11 @@ impl<'a> Feature for StringIndex {
                     match field.value {
                         FieldValue::StringField(ref values) => {
                             for value in values {
-                                for token in self.analyzer.analyze(&value){
+                                for token in self.analyzer.analyze(&value) {
                                     value_to_docs.entry(token).or_insert(Vec::new()).push(
                                         doc_id as
-                                        u64,
-                                        );
+                                            u64,
+                                    );
                                 }
                             }
                         }
@@ -431,7 +434,9 @@ impl<'a> Feature for StringIndex {
             let mut term_doc_counts: Vec<u64> = vec![0; old_segments.len()];
             for term_offset in term_offsets {
                 let source_id_doc_file = &mut source_id_doc_files[term_offset.index];
-                source_id_doc_file.seek(SeekFrom::Start(term_offset.value as u64))?;
+                source_id_doc_file.seek(
+                    SeekFrom::Start(term_offset.value as u64),
+                )?;
                 term_doc_counts[term_offset.index] = read_vint(source_id_doc_file)? as u64;
             }
             let term_doc_count: u64 = term_doc_counts.iter().sum();
@@ -441,7 +446,8 @@ impl<'a> Feature for StringIndex {
                 let source_id_doc_file = &mut source_id_doc_files[term_offset.index];
                 for _ in 0..term_doc_counts[term_offset.index] {
                     let doc_id = read_vint(source_id_doc_file)?;
-                    offset += write_vint(&mut iddoc, new_offsets[term_offset.index] + doc_id)? as u64;
+                    offset += write_vint(&mut iddoc, new_offsets[term_offset.index] + doc_id)? as
+                        u64;
                 }
             }
         }
@@ -597,7 +603,7 @@ impl Feature for StringValues {
                 segment.address.open_file(
                     &format!("{}.{}", &self.field_name, "di"),
                 )?;
-            loop{
+            loop {
                 match source_val_offset_file.read_u64::<BigEndian>() {
                     Ok(source_offset) => {
                         target_val_offset_file.write_u64::<BigEndian>(offset)?;

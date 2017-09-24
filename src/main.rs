@@ -2,8 +2,8 @@ extern crate esmy;
 extern crate time;
 extern crate unicode_segmentation;
 
-use esmy::seg::{self, Field, StringIndex, StringValues};
 use esmy::analyzis::{Analyzer, UAX29Analyzer};
+use esmy::seg::{self, Field, StringIndex, StringValues};
 use std::env;
 use std::io::BufRead;
 use std::ops::Sub;
@@ -24,10 +24,11 @@ fn main() {
     let words = file.lines().map(|l| l.unwrap());
 
     let start_index = time::now();
-    let features: Vec<Box<seg::Feature>> = vec![
-        Box::new(StringIndex::new("value", Box::from(UAX29Analyzer{}))),
-        Box::new(StringValues::new("value")),
-    ];
+    let features: Vec<Box<seg::Feature>> =
+        vec![
+            Box::new(StringIndex::new("value", Box::from(UAX29Analyzer {}))),
+            Box::new(StringValues::new("value")),
+        ];
     let index = seg::Index::new(seg::SegmentSchema { features }, &index_path);
     let mut builder = index.new_segment();
     for word in words {
@@ -53,20 +54,20 @@ fn main() {
     let lines = file2.lines().take(100000).map(|l| l.unwrap());
     let start_search = time::now();
     let mut i: u32 = 0;
-    let analyzer = esmy::analyzis::UAX29Analyzer{};
+    let analyzer = esmy::analyzis::UAX29Analyzer {};
     for line in lines {
         for w2 in analyzer.analyze(&line) {
             let mut matches = 0u32;
             i += 1;
             for doc in reader
                 .string_index("value")
-                    .unwrap()
-                    .doc_iter("value", &w2)
-                    .unwrap()
-                    {
-                        let docid = doc.unwrap();
-                        matches += 1;
-                    }
+                .unwrap()
+                .doc_iter("value", &w2)
+                .unwrap()
+            {
+                let docid = doc.unwrap();
+                matches += 1;
+            }
         }
     }
     println!(
