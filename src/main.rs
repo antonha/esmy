@@ -2,7 +2,6 @@ extern crate esmy;
 extern crate time;
 
 use esmy::seg::{self, Field, StringIndex, StringValues};
-use std::collections::HashMap;
 use std::env;
 use std::io::BufRead;
 use std::ops::Sub;
@@ -29,7 +28,7 @@ fn main() {
     let mut builder = index.new_segment();
     for word in words {
         builder.add_doc(vec![
-            seg::Field {
+            Field {
                 name: "f",
                 value: seg::FieldValue::StringField(vec![word]),
             },

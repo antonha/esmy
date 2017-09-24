@@ -57,6 +57,7 @@ pub struct SegmentAddress {
     name: String,
 }
 
+#[allow(dead_code)]
 pub struct SegmentInfo {
     address: SegmentAddress,
     schema: SegmentSchema,
@@ -261,6 +262,7 @@ impl<'a> SegmentBuilder<'a> {
 }
 
 
+#[allow(dead_code)]
 pub struct SegmentReader {
     address: SegmentAddress,
     readers: Vec<Box<FeatureReader>>,
