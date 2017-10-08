@@ -6,6 +6,7 @@ extern crate esmy;
 #[cfg(test)]
 mod tests {
     use esmy::seg::{self, StringIndex, StringValues};
+    use esmy::analyzis::{NoopAnalyzer};
     use quickcheck::TestResult;
     use std::collections::HashMap;
     use std::env;
@@ -92,7 +93,7 @@ mod tests {
                 fs::remove_dir_all(&index_path).expect("could not delete directory for test");
             }
             let features : Vec<Box<seg::Feature>> = vec![
-                Box::new(StringIndex::new("value")),
+                Box::new(StringIndex::new("value", Box::from(NoopAnalyzer{}))),
                 Box::new(StringValues::new("key")),
             ];
             let index = seg::Index::new(seg::SegmentSchema{features}, &index_path);

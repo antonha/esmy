@@ -1,8 +1,9 @@
 
 use std::borrow::Cow;
+use std::iter;
 use unicode_segmentation::UnicodeSegmentation;
 
-pub trait Analyzer: AnalyzerClone + Send + Sync{
+pub trait Analyzer: AnalyzerClone + Send + Sync {
     fn analyze<'a>(&self, value: &'a str) -> Box<Iterator<Item = Cow<'a, str>> + 'a>;
 }
 
@@ -33,12 +34,11 @@ impl Analyzer for UAX29Analyzer {
             value
                 .split_word_bounds()
                 .filter(|token| !is_only_whitespace_or_control_char(token))
-                .map(|token| /*if token.find(char::is_uppercase).is_some() {
+                .map(|token| if token.find(char::is_uppercase).is_some() {
                     Cow::Owned(token.to_lowercase())
-                } else {*/
+                } else {
                     Cow::Borrowed(token)
-                ),
-        )
+                }))
     }
 }
 
@@ -57,9 +57,10 @@ pub struct WhiteSpaceAnalyzer {}
 impl Analyzer for WhiteSpaceAnalyzer {
     fn analyze<'a>(&self, value: &'a str) -> Box<Iterator<Item = Cow<'a, str>> + 'a> {
         Box::from(
-            value.split_whitespace()
-            .filter(|token| has_words_or_digit(token))
-            .map(|s| Cow::Borrowed(s))
+            value
+                .split_whitespace()
+                .filter(|token| has_words_or_digit(token))
+                .map(|s| Cow::Borrowed(s))
         )
     }
 }
@@ -74,3 +75,11 @@ fn has_words_or_digit(s: &str) -> bool {
 }
 
 
+#[derive(Clone)]
+pub struct NoopAnalyzer {}
+
+impl Analyzer for NoopAnalyzer {
+    fn analyze<'a>(&self, value: &'a str) -> Box<Iterator<Item = Cow<'a, str>> + 'a> {
+        Box::from(iter::once(Cow::Borrowed(value)))
+    }
+}
