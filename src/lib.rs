@@ -5,6 +5,7 @@ extern crate fst;
 extern crate rand;
 extern crate walkdir;
 extern crate unicode_segmentation;
+extern crate afsort;
 
 #[cfg(test)]
 #[macro_use]

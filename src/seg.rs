@@ -7,11 +7,12 @@ use fst::map::OpBuilder;
 use rand::{self, Rng};
 use std::any::Any;
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Error, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use walkdir::{WalkDir, WalkDirIterator};
+use afsort;
 
 const TERM_ID_LISTING: &'static str = "tid";
 const ID_DOC_LISTING: &'static str = "iddoc";
@@ -20,7 +21,7 @@ pub trait FeatureReader {
     fn as_any(&self) -> &Any;
 }
 
-pub trait Feature: FeatureClone {
+pub trait Feature: FeatureClone + Sync + Send {
     fn as_any(&self) -> &Any;
     fn write_segment(&self, address: &SegmentAddress, docs: &Vec<Doc>) -> Result<(), Error>;
     fn reader<'a>(&self, address: SegmentAddress) -> Box<FeatureReader>;
@@ -226,7 +227,6 @@ pub enum FieldValue {
     StringField(Vec<String>),
 }
 
-
 #[derive(Debug)]
 pub struct Field<'a> {
     pub name: &'a str,
@@ -250,11 +250,18 @@ impl<'a> SegmentBuilder<'a> {
         }
     }
 
+    pub fn name(&self) -> &str{
+        &self.address.name
+    }
+
     pub fn add_doc(&mut self, doc: Doc<'a>) {
         self.docs.push(doc)
     }
 
     pub fn commit(&self) -> Result<(), Error> {
+        if(self.docs.is_empty()){
+            return Ok(())
+        }
         for feature in &self.schema.features {
             feature.write_segment(&self.address, &self.docs)?;
         }
@@ -331,13 +338,9 @@ impl StringIndex {
     }
 }
 
-impl<'a> Feature for StringIndex {
-    fn as_any(&self) -> &Any {
-        self
-    }
-
-    fn write_segment(&self, address: &SegmentAddress, docs: &Vec<Doc>) -> Result<(), Error> {
-        let mut value_to_docs: BTreeMap<Cow<str>, Vec<u64>> = BTreeMap::new();
+impl StringIndex {
+    fn docs_to_term_map<'a>(&self, docs: &'a Vec<Doc>) -> Vec<(Cow<'a , str>, u64)> {
+        let mut terms: Vec<(Cow<'a, str>, u64)> = Vec::new();
         {
             for (doc_id, doc) in docs.iter().enumerate() {
                 for field in doc.iter().filter(|f| f.name == &self.field_name) {
@@ -345,10 +348,7 @@ impl<'a> Feature for StringIndex {
                         FieldValue::StringField(ref values) => {
                             for value in values {
                                 for token in self.analyzer.analyze(&value) {
-                                    value_to_docs.entry(token).or_insert(Vec::new()).push(
-                                        doc_id as
-                                            u64,
-                                    );
+                                    terms.push((token, doc_id as u64))
                                 }
                             }
                         }
@@ -356,25 +356,58 @@ impl<'a> Feature for StringIndex {
                 }
             }
         }
+        terms
+    }
+
+    fn write_term_map(&self, address: &SegmentAddress, mut term_map: Vec<(Cow<str>, u64)>) -> Result<(), Error>{
+
+
+        afsort::sort_unstable_by(&mut term_map, |t|t.0.as_bytes());
+
         let mut offset: u64 = 0;
         let tid = address.create_file(
             &format!("{}.{}", &self.field_name, TERM_ID_LISTING),
         )?;
         //TODO: Not unwrap
         let mut tid_builder = MapBuilder::new(BufWriter::new(tid)).unwrap();
-        let mut iddoc = address.create_file(
-            &format!("{}.{}", self.field_name, ID_DOC_LISTING),
-        )?;
-        for (term, ids) in value_to_docs {
-            tid_builder.insert(&term.as_bytes(), offset).unwrap();
-            offset += write_vint(&mut iddoc, ids.len() as u64)? as u64;
-            for id in ids.iter() {
-                offset += write_vint(&mut iddoc, *id)? as u64;
+        let mut iddoc = BufWriter::new(address.create_file(
+            &format!("{}.{}", self.field_name, ID_DOC_LISTING))?
+        );
+        let mut ids = Vec::new();
+        let mut last_term = &term_map[0].0;
+        for &(ref term, id) in term_map.iter() {
+            if term != last_term{
+                tid_builder.insert(&last_term.as_bytes(), offset).unwrap();
+                offset += write_vint(&mut iddoc, ids.len() as u64)? as u64;
+                for id in ids.iter() {
+                    offset += write_vint(&mut iddoc, *id)? as u64;
+                }
+                ids.clear();
             }
+            else{
+                ids.push(id)
+            }
+            last_term = term;
+        }
+        tid_builder.insert(&last_term.as_bytes(), offset).unwrap();
+        offset += write_vint(&mut iddoc, ids.len() as u64)? as u64;
+        for id in ids.iter() {
+            offset += write_vint(&mut iddoc, *id)? as u64;
         }
         tid_builder.finish().unwrap();
-        iddoc.sync_all()?;
         Ok(())
+    }
+
+}
+
+impl<'a> Feature for StringIndex {
+    fn as_any(&self) -> &Any {
+        self
+    }
+
+    fn write_segment(&self, address: &SegmentAddress, docs: &Vec<Doc>) -> Result<(), Error> {
+        let term_map = self.docs_to_term_map(docs);
+        self.write_term_map(address, term_map)
     }
 
     fn merge_segments(
