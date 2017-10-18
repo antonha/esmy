@@ -5,8 +5,8 @@ extern crate esmy;
 
 #[cfg(test)]
 mod tests {
+    use esmy::analyzis::NoopAnalyzer;
     use esmy::seg::{self, StringIndex, StringValues};
-    use esmy::analyzis::{NoopAnalyzer};
     use quickcheck::TestResult;
     use std::collections::HashMap;
     use std::env;

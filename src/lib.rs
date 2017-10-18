@@ -13,3 +13,4 @@ extern crate quickcheck;
 
 pub mod seg;
 pub mod analyzis;
+pub mod search;

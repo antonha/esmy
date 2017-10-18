@@ -1,4 +1,3 @@
-
 use std::borrow::Cow;
 use std::iter;
 use unicode_segmentation::UnicodeSegmentation;
@@ -38,7 +37,8 @@ impl Analyzer for UAX29Analyzer {
                     Cow::Owned(token.to_lowercase())
                 } else {
                     Cow::Borrowed(token)
-                }))
+                }),
+        )
     }
 }
 
@@ -60,7 +60,7 @@ impl Analyzer for WhiteSpaceAnalyzer {
             value
                 .split_whitespace()
                 .filter(|token| has_words_or_digit(token))
-                .map(|s| Cow::Borrowed(s))
+                .map(|s| Cow::Borrowed(s)),
         )
     }
 }

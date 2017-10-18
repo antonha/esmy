@@ -1,4 +1,5 @@
 
+use afsort;
 use analyzis::Analyzer;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use fst::{Map, MapBuilder, Streamer};
@@ -12,7 +13,6 @@ use std::fs::{self, File};
 use std::io::{self, BufWriter, Error, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use walkdir::{WalkDir, WalkDirIterator};
-use afsort;
 
 const TERM_ID_LISTING: &'static str = "tid";
 const ID_DOC_LISTING: &'static str = "iddoc";
@@ -250,7 +250,7 @@ impl<'a> SegmentBuilder<'a> {
         }
     }
 
-    pub fn name(&self) -> &str{
+    pub fn name(&self) -> &str {
         &self.address.name
     }
 
@@ -259,8 +259,8 @@ impl<'a> SegmentBuilder<'a> {
     }
 
     pub fn commit(&self) -> Result<(), Error> {
-        if(self.docs.is_empty()){
-            return Ok(())
+        if (self.docs.is_empty()) {
+            return Ok(());
         }
         for feature in &self.schema.features {
             feature.write_segment(&self.address, &self.docs)?;
@@ -339,7 +339,7 @@ impl StringIndex {
 }
 
 impl StringIndex {
-    fn docs_to_term_map<'a>(&self, docs: &'a Vec<Doc>) -> Vec<(Cow<'a , str>, u64)> {
+    fn docs_to_term_map<'a>(&self, docs: &'a Vec<Doc>) -> Vec<(Cow<'a, str>, u64)> {
         let mut terms: Vec<(Cow<'a, str>, u64)> = Vec::new();
         {
             for (doc_id, doc) in docs.iter().enumerate() {
@@ -359,10 +359,14 @@ impl StringIndex {
         terms
     }
 
-    fn write_term_map(&self, address: &SegmentAddress, mut term_map: Vec<(Cow<str>, u64)>) -> Result<(), Error>{
+    fn write_term_map(
+        &self,
+        address: &SegmentAddress,
+        mut term_map: Vec<(Cow<str>, u64)>,
+    ) -> Result<(), Error> {
 
 
-        afsort::sort_unstable_by(&mut term_map, |t|t.0.as_bytes());
+        afsort::sort_unstable_by(&mut term_map, |t| t.0.as_bytes());
 
         let mut offset: u64 = 0;
         let tid = address.create_file(
@@ -371,20 +375,19 @@ impl StringIndex {
         //TODO: Not unwrap
         let mut tid_builder = MapBuilder::new(BufWriter::new(tid)).unwrap();
         let mut iddoc = BufWriter::new(address.create_file(
-            &format!("{}.{}", self.field_name, ID_DOC_LISTING))?
-        );
+            &format!("{}.{}", self.field_name, ID_DOC_LISTING),
+        )?);
         let mut ids = Vec::new();
         let mut last_term = &term_map[0].0;
         for &(ref term, id) in term_map.iter() {
-            if term != last_term{
+            if term != last_term {
                 tid_builder.insert(&last_term.as_bytes(), offset).unwrap();
                 offset += write_vint(&mut iddoc, ids.len() as u64)? as u64;
                 for id in ids.iter() {
                     offset += write_vint(&mut iddoc, *id)? as u64;
                 }
                 ids.clear();
-            }
-            else{
+            } else {
                 ids.push(id)
             }
             last_term = term;
@@ -397,7 +400,6 @@ impl StringIndex {
         tid_builder.finish().unwrap();
         Ok(())
     }
-
 }
 
 impl<'a> Feature for StringIndex {
