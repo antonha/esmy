@@ -6,12 +6,17 @@ use fst::{Map, MapBuilder, Streamer};
 use fst::map::OpBuilder;
 // use memmap::{Mmap, Protection};
 use rand::{self, Rng};
+use std::collections::HashMap;
 use std::any::Any;
 use std::borrow::Cow;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, BufReader, Error, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use walkdir::{WalkDir, WalkDirIterator};
+
+use serde::{Deserialize, Serialize};
+use rmps::{Deserializer, Serializer};
+
 
 const TERM_ID_LISTING: &'static str = "tid";
 const ID_DOC_LISTING: &'static str = "iddoc";
@@ -223,16 +228,10 @@ fn random_name() -> String {
 
 #[derive(Debug)]
 pub enum FieldValue {
-    StringField(Vec<String>),
+    StringField(String),
 }
 
-#[derive(Debug)]
-pub struct Field<'a> {
-    pub name: &'a str,
-    pub value: FieldValue,
-}
-
-pub type Doc<'a> = Vec<Field<'a>>;
+pub type Doc<'a> = HashMap<&'a str, FieldValue>;
 
 pub struct SegmentBuilder<'a> {
     schema: SegmentSchema,
@@ -258,7 +257,7 @@ impl<'a> SegmentBuilder<'a> {
     }
 
     pub fn commit(&self) -> Result<(), Error> {
-        if (self.docs.is_empty()) {
+        if self.docs.is_empty() {
             return Ok(());
         }
         for feature in &self.schema.features {
@@ -342,13 +341,11 @@ impl StringIndex {
         let mut terms: Vec<(Cow<'a, str>, u64)> = Vec::new();
         {
             for (doc_id, doc) in docs.iter().enumerate() {
-                for field in doc.iter().filter(|f| f.name == &self.field_name) {
-                    match field.value {
-                        FieldValue::StringField(ref values) => {
-                            for value in values {
-                                for token in self.analyzer.analyze(&value) {
-                                    terms.push((token, doc_id as u64))
-                                }
+                for (_name, val) in doc.iter().filter(|e| e.0 == &self.field_name) {
+                    match *val {
+                        FieldValue::StringField(ref value) => {
+                            for token in self.analyzer.analyze(&value) {
+                                terms.push((token, doc_id as u64))
                             }
                         }
                     };
@@ -617,18 +614,14 @@ impl Feature for StringValues {
             &format!("{}.{}", self.field_name, "dv"),
         )?;
         for doc in docs {
-            for doc_field in doc.iter() {
-                if doc_field.name == &self.field_name {
+            for (name, val) in doc.iter() {
+                if name == &self.field_name {
                     di.write_u64::<BigEndian>(offset)?;
-                    let ref val = doc_field.value;
-                    match val {
-                        &FieldValue::StringField(ref vals) => {
-                            offset += write_vint(&mut dv, vals.len() as u64)? as u64;
-                            for val in vals.iter() {
-                                offset += write_vint(&mut dv, val.len() as u64)? as u64;
-                                dv.write((val).as_bytes())?;
-                                offset += val.len() as u64;
-                            }
+                    match *val {
+                        FieldValue::StringField(ref value) => {
+                            offset += write_vint(&mut dv, value.len() as u64)? as u64;
+                            dv.write((value).as_bytes())?;
+                            offset += value.len() as u64;
                         }
                     }
                 }
@@ -665,17 +658,13 @@ impl Feature for StringValues {
                     Ok(source_offset) => {
                         target_val_offset_file.write_u64::<BigEndian>(offset)?;
                         source_val_file.seek(SeekFrom::Start(source_offset))?;
-                        let val_count = read_vint(&mut source_val_file)?;
-                        offset += write_vint(&mut target_val_file, val_count)? as u64;
-                        for _ in 0..val_count {
-                            let val_len = read_vint(&mut source_val_file)?;
-                            offset += write_vint(&mut target_val_file, val_len)? as u64;
-                            for _ in 0..val_len {
-                                let mut buf = [0];
-                                source_val_file.read_exact(&mut buf)?;
-                                target_val_file.write(&buf)?;
-                                offset += 1;
-                            }
+                        let val_len = read_vint(&mut source_val_file)?;
+                        offset += write_vint(&mut target_val_file, val_len)? as u64;
+                        for _ in 0..val_len {
+                            let mut buf = [0];
+                            source_val_file.read_exact(&mut buf)?;
+                            target_val_file.write(&buf)?;
+                            offset += 1;
                         }
                     }
                     Err(error) => {
@@ -714,7 +703,125 @@ impl FeatureReader for StringValueReader {
 }
 
 impl StringValueReader {
-    pub fn read_values(&self, docid: u64) -> Result<Vec<Vec<u8>>, Error> {
+    pub fn read_value(&self, docid: u64) -> Result<Vec<u8>, Error> {
+        let mut di = self.address.open_file(
+            &format!("{}.{}", self.feature.field_name, "di"),
+            )?;
+        di.seek(SeekFrom::Start(docid * 8))?;
+        let offset = di.read_u64::<BigEndian>()?;
+
+        let mut dv = self.address.open_file(
+            &format!("{}.{}", self.feature.field_name, "dv"),
+            )?;
+        dv.seek(SeekFrom::Start(offset))?;
+
+        let val_length = read_vint(&mut dv)?;
+        let mut value = Vec::with_capacity(val_length as usize);
+        for _ in 0..val_length {
+            let mut buf = [0];
+            dv.read_exact(&mut buf)?;
+            value.push(buf[0])
+        }
+        Ok(value)
+    }
+}
+/*
+   pub struct FullDoc{
+   address: SegmentAddress,
+   }
+
+   impl Feature for FullDoc {
+   fn as_any(&self) -> &Any {
+   self
+   }
+
+   fn write_segment(&self, address: &SegmentAddress, docs: &Vec<Doc>) -> Result<(), Error> {
+   let mut offset: u64 = 0;
+   let mut doc_offsets = address.create_file(
+   &format!("fdo"),
+   )?;
+   let mut docs_packed = address.create_file(
+   &format!("fdv"),
+   )?;
+   for doc in docs {
+   }
+   doc_offsets.sync_all()?;
+   docs_packed.sync_all()?;
+   Ok(())
+   }
+
+   fn merge_segments(
+   &self,
+   old_segments: &[SegmentInfo],
+   new_segment: &SegmentAddress,
+   ) -> Result<(), Error> {
+
+   let mut target_val_offset_file = new_segment.create_file("fdo");
+   let mut target_val_file = new_segment.create_file("fdv")?;
+   let mut offset = 0u64;
+   for segment in old_segments.iter() {
+   let mut source_val_file = segment.address.open_file(
+   &format!("{}.{}", &self.field_name, "dv"),
+   )?;
+   let mut source_val_offset_file =
+   segment.address.open_file(
+   &format!("{}.{}", &self.field_name, "di"),
+   )?;
+   loop {
+   match source_val_offset_file.read_u64::<BigEndian>() {
+   Ok(source_offset) => {
+   target_val_offset_file.write_u64::<BigEndian>(offset)?;
+   source_val_file.seek(SeekFrom::Start(source_offset))?;
+   let val_count = read_vint(&mut source_val_file)?;
+   offset += write_vint(&mut target_val_file, val_count)? as u64;
+   for _ in 0..val_count {
+   let val_len = read_vint(&mut source_val_file)?;
+   offset += write_vint(&mut target_val_file, val_len)? as u64;
+   for _ in 0..val_len {
+   let mut buf = [0];
+   source_val_file.read_exact(&mut buf)?;
+   target_val_file.write(&buf)?;
+   offset += 1;
+   }
+   }
+   }
+   Err(error) => {
+   if error.kind() != io::ErrorKind::UnexpectedEof {
+                            return Err(error);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        target_val_file.sync_all()?;
+        target_val_offset_file.sync_all()?;
+        Ok(())
+    }
+
+    fn reader<'b>(&self, address: SegmentAddress) -> Box<FeatureReader> {
+        Box::new({
+            FullDocReader {
+                feature: self.clone(),
+                address: address,
+            }
+        })
+    }
+}
+
+pub struct FullDocReader {
+    feature: FullDocReader,
+    address: SegmentAddress,
+}
+
+impl FeatureReader for FullDocReader {
+    fn as_any(&self) -> &Any {
+        self
+    }
+}
+
+impl FullDocReader {
+    pub fn read_doc(&self, docid: u64) -> Result<Doc>, Error> {
         let mut di = self.address.open_file(
             &format!("{}.{}", self.feature.field_name, "di"),
         )?;
@@ -741,7 +848,7 @@ impl StringValueReader {
         }
         Ok(ret)
     }
-}
+}*/
 
 pub fn write_vint(write: &mut Write, mut value: u64) -> Result<u32, Error> {
     let mut count = 1;

@@ -100,22 +100,20 @@ mod tests {
             {
                 let mut builder = index.new_segment();
                 for (key, value) in docs1.iter(){
-                    builder.add_doc(
-                        vec![
-                            seg::Field {name: "key",value: seg::FieldValue::StringField(vec![key.clone()])},
-                            seg::Field {name: "value",value: seg::FieldValue::StringField(vec![value.clone()])},
-                        ]);
+                    let mut doc = HashMap::new();
+                    doc.insert("key", seg::FieldValue::StringField(key.clone()));
+                    doc.insert("value", seg::FieldValue::StringField(value.clone()));
+                    builder.add_doc(doc);
                 }
                 builder.commit().expect("Failed to commit first segment");
             }
             {
                 let mut builder = index.new_segment();
                 for (key, value) in docs2.iter(){
-                    builder.add_doc(
-                        vec![
-                            seg::Field {name: "key",value: seg::FieldValue::StringField(vec![key.clone()])},
-                            seg::Field {name: "value",value: seg::FieldValue::StringField(vec![value.clone()])},
-                        ]);
+                    let mut doc = HashMap::new();
+                    doc.insert("key", seg::FieldValue::StringField(key.clone()));
+                    doc.insert("value", seg::FieldValue::StringField(value.clone()));
+                    builder.add_doc(doc);
                 }
                 builder.commit().expect("Failed to commit second segment");
             }
@@ -123,30 +121,27 @@ mod tests {
             let indexReader = index.open_reader();
             let ref reader = &indexReader.segment_readers()[0];
             for (key, value) in docs1.iter() {
-                for doc in reader.string_index("value").expect("Could not read string index 1").doc_iter("value", &value).expect("Could not read doc iter") {
+                for doc in reader.string_index("value").expect("Could not read string index 1").doc_iter("value", &value).expect("Could not read doc iter").unwrap() {
                     let docid = doc.expect("Could not read docid");
-                    let actual_keys = reader.string_values("key").expect("No file").read_values(docid).expect("Could not read values");
-                    let actual_key = &actual_keys[0];
+                    let actual_key = reader.string_values("key").expect("No file").read_value(docid).expect("Could not read values");
                     if from_utf8(&actual_key).unwrap() != key {
                         return TestResult::failed();
                     }
                 }
             }
             for (key, value) in docs2.iter() {
-                for doc in reader.string_index("value").expect("Could not read string index 1").doc_iter("value", &value).expect("Could not read doc iter") {
+                for doc in reader.string_index("value").expect("Could not read string index 1").doc_iter("value", &value).expect("Could not read doc iter").unwrap() {
                     let docid = doc.expect("Could not read docid");
-                    let actual_keys = reader.string_values("key").expect("No file").read_values(docid).expect("Could not read values");
-                    let actual_key = &actual_keys[0];
+                    let actual_key = reader.string_values("key").expect("No file").read_value(docid).expect("Could not read values");
                     if from_utf8(&actual_key).unwrap() != key {
                         return TestResult::failed();
                     }
                 }
             }
             for (key, value) in docs2.iter() {
-                for doc in reader.string_index("value").unwrap().doc_iter("value", &value).unwrap() {
+                for doc in reader.string_index("value").unwrap().doc_iter("value", &value).unwrap().unwrap() {
                     let docid = doc.unwrap();
-                    let actual_keys = reader.string_values("key").unwrap().read_values(docid).unwrap();
-                    let actual_key = &actual_keys[0];
+                    let actual_key = reader.string_values("key").unwrap().read_value(docid).unwrap();
                     if from_utf8(&actual_key).unwrap() != key {
                         return TestResult::failed();
                     }

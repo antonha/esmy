@@ -12,12 +12,13 @@ extern crate jobsteal;
 use bzip2::read::{BzDecoder, BzEncoder};
 use esmy::analyzis::{Analyzer, UAX29Analyzer, WhiteSpaceAnalyzer};
 use esmy::search;
-use esmy::seg::{self, Field, StringIndex, StringValues};
+use esmy::seg::{self, StringIndex, StringValues};
 use std::env;
 use std::io::BufRead;
 use std::ops::Sub;
 use std::path::Path;
 use std::str;
+use std::collections::HashMap;
 use std::sync::mpsc;
 //use serde_json::{Deserializer, Value};
 use std::sync::mpsc::{Receiver, Sender};
@@ -47,12 +48,9 @@ fn main() {
     let mut builder = index.new_segment();
     for line in reader.lines().take(30000) {
         let body = line.unwrap();
-        builder.add_doc(vec![
-                        seg::Field {
-                            name: "text",
-                            value: seg::FieldValue::StringField(vec![body]),
-                        },
-        ]);
+        let mut doc = HashMap::new();
+        doc.insert("text", seg::FieldValue::StringField(body));
+        builder.add_doc(doc);
         i += 1;
         if i % 5000 == 0 {
             builder.commit().unwrap();

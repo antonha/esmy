@@ -7,6 +7,9 @@ extern crate walkdir;
 extern crate unicode_segmentation;
 extern crate afsort;
 
+extern crate serde;
+extern crate rmp_serde as rmps;
+
 #[cfg(test)]
 #[macro_use]
 extern crate quickcheck;
