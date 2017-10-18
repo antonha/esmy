@@ -8,9 +8,8 @@ use fst::map::OpBuilder;
 use rand::{self, Rng};
 use std::any::Any;
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{self, BufWriter, Error, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufWriter, BufReader, Error, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use walkdir::{WalkDir, WalkDirIterator};
 
@@ -364,6 +363,9 @@ impl StringIndex {
         address: &SegmentAddress,
         mut term_map: Vec<(Cow<str>, u64)>,
     ) -> Result<(), Error> {
+        if term_map.is_empty(){
+            return Ok(());
+        }
 
 
         afsort::sort_unstable_by(&mut term_map, |t| t.0.as_bytes());
@@ -418,7 +420,16 @@ impl<'a> Feature for StringIndex {
         new_segment: &SegmentAddress,
     ) -> Result<(), Error> {
         let mut maps = Vec::with_capacity(old_segments.len());
-        for segment in old_segments.iter() {
+        let segments_to_merge = old_segments.iter().filter(|s|{
+            let path = s.address.path.join(format!(
+                "{}.{}.{}",
+                s.address.name,
+                self.field_name,
+                TERM_ID_LISTING
+            ));
+            path.exists()
+        }).collect::<Vec<&SegmentInfo>>();
+        for segment in segments_to_merge.iter() {
             let path = segment.address.path.join(format!(
                 "{}.{}.{}",
                 segment.address.name,
@@ -436,8 +447,8 @@ impl<'a> Feature for StringIndex {
         let mut source_id_doc_files = Vec::with_capacity(old_segments.len());
         let ending = format!("{}.{}", self.field_name, ID_DOC_LISTING);
 
-        for old_segment in old_segments {
-            source_id_doc_files.push(old_segment.address.open_file(&ending)?);
+        for old_segment in segments_to_merge {
+            source_id_doc_files.push(BufReader::new(old_segment.address.open_file(&ending)?));
         }
 
         let tid = new_segment.create_file(&format!(
@@ -447,11 +458,11 @@ impl<'a> Feature for StringIndex {
         ))?;
         //TODO: Not unwrap
         let mut tid_builder = MapBuilder::new(BufWriter::new(tid)).unwrap();
-        let mut iddoc = new_segment.create_file(&format!(
+        let mut iddoc = BufWriter::new(new_segment.create_file(&format!(
             "{}.{}",
             self.field_name,
             ID_DOC_LISTING
-        ))?;
+        ))?);
 
         let mut new_offsets = Vec::with_capacity(old_segments.len());
         {
@@ -487,7 +498,7 @@ impl<'a> Feature for StringIndex {
             }
         }
         tid_builder.finish().unwrap();
-        iddoc.sync_all()?;
+        //iddoc.sync_all()?;
         Ok(())
     }
 
@@ -498,20 +509,31 @@ impl<'a> Feature for StringIndex {
             self.field_name,
             TERM_ID_LISTING
         ));
-        Box::new({
-            StringIndexReader {
-                feature: self.clone(),
-                address: address,
-                map: Map::from_path(path).unwrap(),
-            }
-        })
+        if path.exists() {
+            Box::new({
+                StringIndexReader {
+                    feature: self.clone(),
+                    address: address,
+                    map: Some(Map::from_path(path).unwrap()),
+                }
+            })
+        }
+        else{
+            Box::new({
+                StringIndexReader {
+                    feature: self.clone(),
+                    address: address,
+                    map: None,
+                }
+            })
+        }
     }
 }
 
 pub struct StringIndexReader {
     feature: StringIndex,
     address: SegmentAddress,
-    map: Map,
+    map: Option<Map>,
 }
 
 impl FeatureReader for StringIndexReader {
@@ -521,36 +543,36 @@ impl FeatureReader for StringIndexReader {
 }
 
 impl StringIndexReader {
-    pub fn doc_iter(&self, field: &str, term: &str) -> Result<DocIter, Error> {
+    pub fn doc_iter(&self, field: &str, term: &str) -> Result<Option<DocIter>, Error> {
         let maybe_offset = self.term_offset(term)?;
-        let mut iddoc = self.address.open_file(
-            &format!("{}.{}", field, ID_DOC_LISTING),
-        )?;
         match maybe_offset {
             None => {
-                Ok(DocIter {
-                    file: iddoc,
-                    left: 0,
-                })
+                Ok(None)
             }
             Some(offset) => {
+                let mut iddoc = BufReader::new(self.address.open_file(
+                    &format!("{}.{}", field, ID_DOC_LISTING),
+                    )?);
                 iddoc.seek(SeekFrom::Start(offset as u64))?;
                 let num = read_vint(&mut iddoc)?;
-                Ok(DocIter {
+                Ok(Some(DocIter {
                     file: iddoc,
                     left: num,
-                })
+                }))
             }
         }
     }
 
     fn term_offset(&self, term: &str) -> Result<Option<u64>, Error> {
-        return Ok(self.map.get(term));
+        Ok(match self.map {
+            Some(ref m) => m.get(term),
+            None => None
+        })
     }
 }
 
 pub struct DocIter {
-    file: File,
+    file: BufReader<File>,
     left: u64,
 }
 

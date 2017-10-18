@@ -32,70 +32,29 @@ fn main() {
     if !index_path.exists() {
         std::fs::create_dir_all(&index_path).unwrap()
     }
-    let f = std::fs::File::open(env::current_dir().unwrap().join("rows.out")).unwrap();
-    let file = std::io::BufReader::new(&f);
-
-    let mut pool = jobsteal::make_pool(4).unwrap();
-
     let start_index = time::now();
+
 
     let reader = std::io::BufReader::new(
         std::fs::File::open("/home/anton/dev/off/wiki_dump/bodies.txt").unwrap(),
     );
+    let features: Vec<Box<seg::Feature>> =
+        vec![
+        Box::new(StringIndex::new("text", Box::from(UAX29Analyzer {}))),
+        ];
+    let index = seg::Index::new(seg::SegmentSchema { features }, &index_path);
     let mut i = 0i64;
-    let mut bodies = vec![];
-    pool.scope(|scope| {
-        for line in reader.lines().take(300000) {
-            bodies.push(line.unwrap());
-            i += 1;
-            if i % 5000 == 0 {
-                let p = index_path.clone();
-                let features: Vec<Box<seg::Feature>> =
-                    vec![
-                    Box::new(StringIndex::new("text", Box::from(WhiteSpaceAnalyzer {}))),
-               //     Box::new(StringValues::new("text")),
-                    ];
-                scope.submit(move || {
-                    let index = seg::Index::new(seg::SegmentSchema { features }, &p);
-                    let mut builder = index.new_segment();
-                    for body in bodies {
-                        builder.add_doc(vec![
-                            seg::Field {
-                                name: "text",
-                                value: seg::FieldValue::StringField(vec![body]),
-                            },
-                        ]);
-                    }
-                    builder.commit().unwrap();
-                    let used = time::now().sub(start_index).num_milliseconds();
-                    println!(
-                        "Written: {} took: {}, dps: {}",
-                        i,
-                        used,
-                        (i) / (1 + used / 1000)
-                    );
-                    println!("Done writing: {}", builder.name());
-                });
-                bodies = vec![];
-            }
-        }
-        let p = index_path.clone();
-        let features: Vec<Box<seg::Feature>> =
-            vec![
-                    Box::new(StringIndex::new("text", Box::from(WhiteSpaceAnalyzer {}))),
-               //     Box::new(StringValues::new("text")),
-                    ];
-        scope.submit(move || {
-            let index = seg::Index::new(seg::SegmentSchema { features }, &p);
-            let mut builder = index.new_segment();
-            for body in bodies {
-                builder.add_doc(vec![
-                    seg::Field {
-                        name: "text",
-                        value: seg::FieldValue::StringField(vec![body]),
-                    },
-                ]);
-            }
+    let mut builder = index.new_segment();
+    for line in reader.lines().take(30000) {
+        let body = line.unwrap();
+        builder.add_doc(vec![
+                        seg::Field {
+                            name: "text",
+                            value: seg::FieldValue::StringField(vec![body]),
+                        },
+        ]);
+        i += 1;
+        if i % 5000 == 0 {
             builder.commit().unwrap();
             let used = time::now().sub(start_index).num_milliseconds();
             println!(
@@ -103,31 +62,31 @@ fn main() {
                 i,
                 used,
                 (i) / (1 + used / 1000)
-            );
-            println!("Done writing: {}", builder.name());
-        });
-        bodies = vec![];
-    });
+                );
+            builder = index.new_segment();
+        }
+    }
+    builder.commit().unwrap();
     println!(
         "Indexing took: {0}",
         time::now().sub(start_index).num_milliseconds()
     );
-    let features: Vec<Box<seg::Feature>> =
-        vec![
-        Box::new(StringIndex::new("text", Box::from(WhiteSpaceAnalyzer {}))),
-        //     Box::new(StringValues::new("text")),
-        ];
-    let index = seg::Index::new(seg::SegmentSchema { features }, &index_path);
-    println!("WOOP");
+    
+    let start_merge = time::now();
+    index.merge(&index.list_segments()).unwrap();
+    println!(
+        "Merging took: {0}",
+        time::now().sub(start_merge).num_milliseconds()
+    );
+
     let index_reader = index.open_reader();
     let f2 = std::fs::File::open("/usr/share/dict/american-english").unwrap();
     let file2 = std::io::BufReader::new(&f2);
     let lines = file2.lines().take(100000).map(|l| l.unwrap());
-    let analyzer = esmy::analyzis::WhiteSpaceAnalyzer {};
-    for line in lines {
+    let analyzer = esmy::analyzis::UAX29Analyzer {};
+    for line in lines.take(100) {
         let start_search = time::now();
         let mut collector = search::CountCollector::new();
-        println!("Looking at '{}'", line);
         search::search(
             &index_reader,
             &search::TextQuery::new("text", &line, &analyzer),
