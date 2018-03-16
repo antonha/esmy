@@ -14,7 +14,7 @@ use std::io::{self, BufWriter, BufReader, Error, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use walkdir::{WalkDir, WalkDirIterator};
 
-use serde::{Deserialize, Serialize};
+use serde::{self, Deserialize, Serialize};
 use rmps::{Deserializer, Serializer};
 
 
@@ -226,7 +226,7 @@ fn random_name() -> String {
     rand::thread_rng().gen_ascii_chars().take(10).collect()
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldValue {
     StringField(String),
 }
@@ -726,67 +726,71 @@ impl StringValueReader {
     }
 }
 /*
-   pub struct FullDoc{
-   address: SegmentAddress,
-   }
+pub struct FullDoc{
+    address: SegmentAddress,
+}
 
-   impl Feature for FullDoc {
-   fn as_any(&self) -> &Any {
-   self
-   }
+impl Feature for FullDoc {
+    fn as_any(&self) -> &Any {
+        self
+    }
 
-   fn write_segment(&self, address: &SegmentAddress, docs: &Vec<Doc>) -> Result<(), Error> {
-   let mut offset: u64 = 0;
-   let mut doc_offsets = address.create_file(
-   &format!("fdo"),
-   )?;
-   let mut docs_packed = address.create_file(
-   &format!("fdv"),
-   )?;
-   for doc in docs {
-   }
-   doc_offsets.sync_all()?;
-   docs_packed.sync_all()?;
-   Ok(())
-   }
+    fn write_segment(&self, address: &SegmentAddress, docs: &Vec<Doc>) -> Result<(), Error> {
+        let mut offset: u64 = 0;
+        let mut doc_offsets = address.create_file(
+            &format!("fdo"),
+            )?;
+        let mut docs_packed = address.create_file(
+            &format!("fdv"),
+            )?;
+        for doc in docs {
+            doc.serialize(&mut Serializer::new()).unwrap();
+            docs_packed.offset()
 
-   fn merge_segments(
-   &self,
-   old_segments: &[SegmentInfo],
-   new_segment: &SegmentAddress,
-   ) -> Result<(), Error> {
+        }
 
-   let mut target_val_offset_file = new_segment.create_file("fdo");
-   let mut target_val_file = new_segment.create_file("fdv")?;
-   let mut offset = 0u64;
-   for segment in old_segments.iter() {
-   let mut source_val_file = segment.address.open_file(
-   &format!("{}.{}", &self.field_name, "dv"),
-   )?;
-   let mut source_val_offset_file =
-   segment.address.open_file(
-   &format!("{}.{}", &self.field_name, "di"),
-   )?;
-   loop {
-   match source_val_offset_file.read_u64::<BigEndian>() {
-   Ok(source_offset) => {
-   target_val_offset_file.write_u64::<BigEndian>(offset)?;
-   source_val_file.seek(SeekFrom::Start(source_offset))?;
-   let val_count = read_vint(&mut source_val_file)?;
-   offset += write_vint(&mut target_val_file, val_count)? as u64;
-   for _ in 0..val_count {
-   let val_len = read_vint(&mut source_val_file)?;
-   offset += write_vint(&mut target_val_file, val_len)? as u64;
-   for _ in 0..val_len {
-   let mut buf = [0];
-   source_val_file.read_exact(&mut buf)?;
-   target_val_file.write(&buf)?;
-   offset += 1;
-   }
-   }
-   }
-   Err(error) => {
-   if error.kind() != io::ErrorKind::UnexpectedEof {
+        doc_offsets.sync_all()?;
+        docs_packed.sync_all()?;
+        Ok(())
+    }
+
+    fn merge_segments(
+        &self,
+        old_segments: &[SegmentInfo],
+        new_segment: &SegmentAddress,
+        ) -> Result<(), Error> {
+
+        let mut target_val_offset_file = new_segment.create_file("fdo");
+        let mut target_val_file = new_segment.create_file("fdv")?;
+        let mut offset = 0u64;
+        for segment in old_segments.iter() {
+            let mut source_val_file = segment.address.open_file(
+                &format!("{}.{}", &self.field_name, "dv"),
+                )?;
+            let mut source_val_offset_file =
+                segment.address.open_file(
+                    &format!("{}.{}", &self.field_name, "di"),
+                    )?;
+            loop {
+                match source_val_offset_file.read_u64::<BigEndian>() {
+                    Ok(source_offset) => {
+                        target_val_offset_file.write_u64::<BigEndian>(offset)?;
+                        source_val_file.seek(SeekFrom::Start(source_offset))?;
+                        let val_count = read_vint(&mut source_val_file)?;
+                        offset += write_vint(&mut target_val_file, val_count)? as u64;
+                        for _ in 0..val_count {
+                            let val_len = read_vint(&mut source_val_file)?;
+                            offset += write_vint(&mut target_val_file, val_len)? as u64;
+                            for _ in 0..val_len {
+                                let mut buf = [0];
+                                source_val_file.read_exact(&mut buf)?;
+                                target_val_file.write(&buf)?;
+                                offset += 1;
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        if error.kind() != io::ErrorKind::UnexpectedEof {
                             return Err(error);
                         }
                         break;
@@ -821,16 +825,17 @@ impl FeatureReader for FullDocReader {
 }
 
 impl FullDocReader {
+
     pub fn read_doc(&self, docid: u64) -> Result<Doc>, Error> {
         let mut di = self.address.open_file(
             &format!("{}.{}", self.feature.field_name, "di"),
-        )?;
+            )?;
         di.seek(SeekFrom::Start(docid * 8))?;
         let offset = di.read_u64::<BigEndian>()?;
 
         let mut dv = self.address.open_file(
             &format!("{}.{}", self.feature.field_name, "dv"),
-        )?;
+            )?;
         dv.seek(SeekFrom::Start(offset))?;
 
         let num_values = read_vint(&mut dv)?;
@@ -848,7 +853,8 @@ impl FullDocReader {
         }
         Ok(ret)
     }
-}*/
+}
+*/
 
 pub fn write_vint(write: &mut Write, mut value: u64) -> Result<u32, Error> {
     let mut count = 1;
@@ -874,6 +880,42 @@ pub fn read_vint(read: &mut Read) -> Result<u64, Error> {
     return Ok(res as u64);
 }
 
+impl <'a> serde::Serialize for FieldValue{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: serde::Serializer
+    {
+        match *self{
+            FieldValue::StringField(ref value) => serializer.serialize_str(&value)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for FieldValue {
+    fn deserialize<D>(deserializer: D) -> Result<FieldValue, D::Error>
+        where D: serde::Deserializer<'de>
+    {
+        deserializer.deserialize_str(FieldValueVisitor)
+    }
+}
+
+
+use serde::de::{self, Visitor};
+use std::fmt;
+
+struct FieldValueVisitor;
+
+impl<'de> Visitor<'de> for FieldValueVisitor {
+    type Value = FieldValue;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("A string value")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<FieldValue, E>
+        where E: de::Error
+    {
+        Ok(FieldValue::StringField(String::from(value)))
+    }
+}
 
 
 #[cfg(test)]
@@ -882,6 +924,12 @@ mod tests {
     use super::read_vint;
     use super::write_vint;
     use std::io::Cursor;
+    use super::Doc;
+
+
+    use serde::{Deserialize, Serialize};
+    use rmps::{Deserializer, Serializer};
+
 
     quickcheck!{
         fn read_write_correct(num1: u64, num2: u64) -> bool {
@@ -890,6 +938,16 @@ mod tests {
             write_vint(&mut write, num).unwrap();
             write.set_position(0);
             num == read_vint(&mut write).unwrap()
+        }
+    }
+    
+    quickcheck!{
+        fn serializes_doc_correct(doc: Doc) -> bool {
+            let mut buf = Vec::new();
+            doc.serialize(&mut Serializer::new(&mut buf)).unwrap();
+            let mut de = Deserializer::new(&buf[..]);
+            doc == Deserialize::deserialize(&mut de).unwrap()
+
         }
     }
 }
