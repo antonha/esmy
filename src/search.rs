@@ -1,4 +1,3 @@
-
 use analyzis::Analyzer;
 use seg::{IndexReader, SegmentReader};
 use std::borrow::Cow;
@@ -11,19 +10,20 @@ pub fn search(
 ) -> Result<(), Error> {
     for segment_reader in index_reader.segment_readers() {
         match query.segment_matches(&segment_reader) {
-            Some(disi) => {
-                for doc in disi{
-                    collector.collect(segment_reader, doc.unwrap());
-                }
+            Some(disi) => for doc in disi {
+                collector.collect(segment_reader, doc.unwrap());
             },
-            None => ()
+            None => (),
         };
     }
     Ok(())
 }
 
 pub trait SegmentQuery {
-    fn segment_matches(&self, reader: &SegmentReader) -> Option<Box<Iterator<Item = Result<u64, Error>>>>;
+    fn segment_matches(
+        &self,
+        reader: &SegmentReader,
+    ) -> Option<Box<Iterator<Item = Result<u64, Error>>>>;
 }
 
 pub struct ValueQuery<'a> {
@@ -32,11 +32,14 @@ pub struct ValueQuery<'a> {
 }
 
 impl<'a> SegmentQuery for ValueQuery<'a> {
-    fn segment_matches(&self, reader: &SegmentReader) -> Option<Box<Iterator<Item = Result<u64, Error>>>> {
+    fn segment_matches(
+        &self,
+        reader: &SegmentReader,
+    ) -> Option<Box<Iterator<Item = Result<u64, Error>>>> {
         let index = reader.string_index(self.field).unwrap();
-        match index.doc_iter(self.field, &self.value).unwrap(){
+        match index.doc_iter(self.field, &self.value).unwrap() {
             Some(iter) => Some(Box::from(iter)),
-            None => None
+            None => None,
         }
     }
 }
@@ -56,11 +59,14 @@ impl<'a> TextQuery<'a> {
 }
 
 impl<'a> SegmentQuery for TextQuery<'a> {
-    fn segment_matches(&self, reader: &SegmentReader) -> Option<Box<Iterator<Item = Result<u64, Error>>>> {
+    fn segment_matches(
+        &self,
+        reader: &SegmentReader,
+    ) -> Option<Box<Iterator<Item = Result<u64, Error>>>> {
         let index = reader.string_index(self.field).unwrap();
-        match index.doc_iter(self.field, &self.values[0]).unwrap(){
+        match index.doc_iter(self.field, &self.values[0]).unwrap() {
             Some(iter) => Some(Box::from(iter)),
-            None => None
+            None => None,
         }
     }
 }

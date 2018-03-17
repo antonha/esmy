@@ -1,7 +1,6 @@
+extern crate esmy;
 #[macro_use]
 extern crate quickcheck;
-extern crate esmy;
-
 
 #[cfg(test)]
 mod tests {
@@ -11,12 +10,10 @@ mod tests {
     use std::collections::HashMap;
     use std::env;
     use std::fs;
-
     use std::panic;
     use std::path::Path;
     use std::str::from_utf8;
-    use std::sync::{ONCE_INIT, Once};
-
+    use std::sync::{Once, ONCE_INIT};
 
     quickcheck! {
         /*
@@ -65,8 +62,11 @@ mod tests {
             }
             return TestResult::passed();
         }*/
-        
-        fn finds_merged(docs1: HashMap<String, String>, docs2: HashMap<String, String>) -> TestResult {
+
+        fn finds_merged(
+            docs1: HashMap<String, String>,
+            docs2: HashMap<String, String>)
+            -> TestResult {
             if docs1.is_empty() {
                 return TestResult::discard();
             }
@@ -85,7 +85,7 @@ mod tests {
             if docs2.keys().find(|&s| s.is_empty()).is_some(){
                 return TestResult::discard();
             }
-    
+
 
 
             let index_path = env::current_dir().expect("failed to get current dir").join(&Path::new("tmp/tests/index"));

@@ -1,14 +1,13 @@
-
 #![feature(conservative_impl_trait)]
+extern crate afsort;
 extern crate byteorder;
 extern crate fst;
 extern crate rand;
-extern crate walkdir;
 extern crate unicode_segmentation;
-extern crate afsort;
+extern crate walkdir;
 
-extern crate serde;
 extern crate rmp_serde as rmps;
+extern crate serde;
 
 #[cfg(test)]
 #[macro_use]

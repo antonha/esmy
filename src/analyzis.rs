@@ -33,15 +33,16 @@ impl Analyzer for UAX29Analyzer {
             value
                 .split_word_bounds()
                 .filter(|token| !is_only_whitespace_or_control_char(token))
-                .map(|token| if token.find(char::is_uppercase).is_some() {
-                    Cow::Owned(token.to_lowercase())
-                } else {
-                    Cow::Borrowed(token)
+                .map(|token| {
+                    if token.find(char::is_uppercase).is_some() {
+                        Cow::Owned(token.to_lowercase())
+                    } else {
+                        Cow::Borrowed(token)
+                    }
                 }),
         )
     }
 }
-
 
 fn is_only_whitespace_or_control_char(s: &str) -> bool {
     for c in s.chars() {
@@ -73,7 +74,6 @@ fn has_words_or_digit(s: &str) -> bool {
     }
     return false;
 }
-
 
 #[derive(Clone)]
 pub struct NoopAnalyzer {}
