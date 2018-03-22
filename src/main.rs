@@ -1,6 +1,4 @@
-extern crate bzip2;
 extern crate esmy;
-extern crate quick_xml;
 extern crate time;
 
 extern crate jobsteal;
@@ -21,6 +19,8 @@ fn main() {
     println!("{:?}", index_path);
     if !index_path.exists() {
         std::fs::create_dir_all(&index_path).unwrap()
+    } else {
+        std::fs::remove_dir_all(&index_path).unwrap()
     }
     let start_index = time::now();
     let reader = std::io::BufReader::new(
