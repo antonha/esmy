@@ -348,11 +348,10 @@ impl StringIndex {
             for (doc_id, doc) in docs.iter().enumerate() {
                 for (_name, val) in doc.iter().filter(|e| e.0 == &self.field_name) {
                     match *val {
-                        FieldValue::String(ref value) => {
-                            for token in self.analyzer.analyze(&value) {
-                                terms.push((token, doc_id as u64))
-                            }
-                        }
+                        FieldValue::String(ref value) => for token in self.analyzer.analyze(&value)
+                        {
+                            terms.push((token, doc_id as u64))
+                        },
                     };
                 }
             }
@@ -717,8 +716,8 @@ impl Feature for FullDoc {
 
     fn write_segment(&self, address: &SegmentAddress, docs: &Vec<Doc>) -> Result<(), Error> {
         let mut offset: u64 = 0;
-        let mut doc_offsets = address.create_file(&format!("fdo"))?;
-        let mut docs_packed = address.create_file(&format!("fdv"))?;
+        let mut doc_offsets = address.create_file("fdo")?;
+        let mut docs_packed = address.create_file("fdv")?;
         for doc in docs {
             doc_offsets.write_u64::<BigEndian>(offset)?;
             offset = docs_packed.seek(SeekFrom::Current(0))?;
@@ -742,7 +741,7 @@ impl Feature for FullDoc {
         let mut target_val_file = new_segment.create_file("fdv")?;
         let mut base_offset = 0u64;
         for segment in old_segments.iter() {
-            let mut source_val_file = segment.address.open_file(".dv")?;
+            let mut source_val_file = segment.address.open_file("fdv")?;
             let mut source_val_offset_file = segment.address.open_file("fdo")?;
             loop {
                 match source_val_offset_file.read_u64::<BigEndian>() {
@@ -858,23 +857,20 @@ mod tests {
     use super::FieldValue;
     use super::read_vint;
     use super::write_vint;
-    use proptest::prelude::*;
     use proptest::collection::hash_map;
+    use proptest::prelude::*;
     use rmps::{Deserializer, Serializer};
     use serde::{Deserialize, Serialize};
     use std::io::Cursor;
 
-
     fn arb_fieldvalue() -> BoxedStrategy<FieldValue> {
-        prop_oneof![
-            ".*".prop_map(FieldValue::String),
-        ].boxed()
+        prop_oneof![".*".prop_map(FieldValue::String),].boxed()
     }
 
     fn arb_fieldname() -> BoxedStrategy<String> {
-        "[a-z]+".prop_map(|s|s).boxed()
+        "[a-z]+".prop_map(|s| s).boxed()
     }
-    
+
     fn arb_doc() -> BoxedStrategy<Doc> {
         hash_map(arb_fieldname(), arb_fieldvalue(), 0..100).boxed()
     }

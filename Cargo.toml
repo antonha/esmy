@@ -31,3 +31,7 @@ path = "src/main.rs"
 
 [profile.release]
 debug = true
+
+[profile.test]
+# This is faster, since the tests are CPU-intensive
+opt-level = 3
