@@ -11,7 +11,7 @@ extern crate serde;
 
 #[cfg(test)]
 #[macro_use]
-extern crate quickcheck;
+extern crate proptest;
 
 pub mod seg;
 pub mod analyzis;

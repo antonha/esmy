@@ -2,8 +2,6 @@ extern crate bzip2;
 extern crate esmy;
 extern crate quick_xml;
 extern crate time;
-//extern crate serde;
-//extern crate serde_json;
 
 extern crate jobsteal;
 
@@ -34,13 +32,13 @@ fn main() {
     let index = seg::Index::new(seg::SegmentSchema { features }, &index_path);
     let mut i = 0i64;
     let mut builder = index.new_segment();
-    for line in reader.lines().take(3000000) {
+    for line in reader.lines().take(30_000_000) {
         let body = line.unwrap();
         let mut doc = HashMap::new();
-        doc.insert("text", seg::FieldValue::StringField(body));
+        doc.insert("text".to_owned(), seg::FieldValue::String(body));
         builder.add_doc(doc);
         i += 1;
-        if i % 5000 == 0 {
+        if i % 50000 == 0 {
             builder.commit().unwrap();
             let used = time::now().sub(start_index).num_milliseconds();
             println!(
@@ -58,6 +56,7 @@ fn main() {
         time::now().sub(start_index).num_milliseconds()
     );
 
+    println!("Startnig merging");
     let start_merge = time::now();
     index.merge(&index.list_segments()).unwrap();
     println!(

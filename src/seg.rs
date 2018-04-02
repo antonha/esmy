@@ -190,7 +190,6 @@ impl<'a> Index<'a> {
                 doc_count,
             });
         }
-
         let new_segment_address = SegmentAddress {
             path: PathBuf::from(self.path),
             name: random_name(),
@@ -198,7 +197,6 @@ impl<'a> Index<'a> {
         for feature in self.schema_template.features.iter() {
             feature.merge_segments(&infos, &new_segment_address)?;
         }
-
         let doc_count: u64 = infos.iter().map(|i| i.doc_count).sum();
         let mut file = new_segment_address.create_file("seg")?;
         write_vint(&mut file, doc_count)?;
@@ -225,19 +223,19 @@ fn random_name() -> String {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldValue {
-    StringField(String),
+    String(String),
 }
 
-pub type Doc<'a> = HashMap<&'a str, FieldValue>;
+pub type Doc = HashMap<String, FieldValue>;
 
-pub struct SegmentBuilder<'a> {
+pub struct SegmentBuilder {
     schema: SegmentSchema,
     address: SegmentAddress,
-    docs: Vec<Doc<'a>>,
+    docs: Vec<Doc>,
 }
 
-impl<'a> SegmentBuilder<'a> {
-    pub fn new(schema: SegmentSchema, address: SegmentAddress) -> SegmentBuilder<'a> {
+impl SegmentBuilder {
+    pub fn new(schema: SegmentSchema, address: SegmentAddress) -> SegmentBuilder {
         SegmentBuilder {
             address,
             schema,
@@ -249,7 +247,7 @@ impl<'a> SegmentBuilder<'a> {
         &self.address.name
     }
 
-    pub fn add_doc(&mut self, doc: Doc<'a>) {
+    pub fn add_doc(&mut self, doc: Doc) {
         self.docs.push(doc)
     }
 
@@ -350,7 +348,7 @@ impl StringIndex {
             for (doc_id, doc) in docs.iter().enumerate() {
                 for (_name, val) in doc.iter().filter(|e| e.0 == &self.field_name) {
                     match *val {
-                        FieldValue::StringField(ref value) => {
+                        FieldValue::String(ref value) => {
                             for token in self.analyzer.analyze(&value) {
                                 terms.push((token, doc_id as u64))
                             }
@@ -423,7 +421,7 @@ impl<'a> Feature for StringIndex {
                 StringIndexReader {
                     feature: self.clone(),
                     address: address,
-                    map: Some(Map::from_path(path).unwrap()),
+                    map: Some(unsafe { Map::from_path(path).unwrap() }),
                 }
             })
         } else {
@@ -458,7 +456,7 @@ impl<'a> Feature for StringIndex {
                 "{}.{}.{}",
                 segment.address.name, self.field_name, TERM_ID_LISTING
             ));
-            maps.push(Map::from_path(path).unwrap());
+            maps.push(unsafe { Map::from_path(path).unwrap() });
         }
 
         let mut op_builder = OpBuilder::new();
@@ -601,7 +599,7 @@ impl Feature for StringValues {
                 if name == &self.field_name {
                     di.write_u64::<BigEndian>(offset)?;
                     match *val {
-                        FieldValue::StringField(ref value) => {
+                        FieldValue::String(ref value) => {
                             offset += write_vint(&mut dv, value.len() as u64)? as u64;
                             dv.write((value).as_bytes())?;
                             offset += value.len() as u64;
@@ -704,8 +702,12 @@ impl StringValueReader {
 }
 
 #[derive(Clone)]
-pub struct FullDoc {
-    address: SegmentAddress,
+pub struct FullDoc {}
+
+impl FullDoc {
+    pub fn new() -> FullDoc {
+        FullDoc {}
+    }
 }
 
 impl Feature for FullDoc {
@@ -815,7 +817,7 @@ impl<'a> serde::Serialize for FieldValue {
         S: serde::Serializer,
     {
         match *self {
-            FieldValue::StringField(ref value) => serializer.serialize_str(&value),
+            FieldValue::String(ref value) => serializer.serialize_str(&value),
         }
     }
 }
@@ -845,7 +847,7 @@ impl<'de> Visitor<'de> for FieldValueVisitor {
     where
         E: de::Error,
     {
-        Ok(FieldValue::StringField(String::from(value)))
+        Ok(FieldValue::String(String::from(value)))
     }
 }
 
@@ -853,29 +855,45 @@ impl<'de> Visitor<'de> for FieldValueVisitor {
 mod tests {
 
     use super::Doc;
+    use super::FieldValue;
     use super::read_vint;
     use super::write_vint;
+    use proptest::prelude::*;
+    use proptest::collection::hash_map;
     use rmps::{Deserializer, Serializer};
     use serde::{Deserialize, Serialize};
     use std::io::Cursor;
 
-    quickcheck!{
-        fn read_write_correct(num1: u64, num2: u64) -> bool {
-            let num =  num1 * num2;
+
+    fn arb_fieldvalue() -> BoxedStrategy<FieldValue> {
+        prop_oneof![
+            ".*".prop_map(FieldValue::String),
+        ].boxed()
+    }
+
+    fn arb_fieldname() -> BoxedStrategy<String> {
+        "[a-z]+".prop_map(|s|s).boxed()
+    }
+    
+    fn arb_doc() -> BoxedStrategy<Doc> {
+        hash_map(arb_fieldname(), arb_fieldvalue(), 0..100).boxed()
+    }
+
+    proptest!{
+        #[test]
+        fn read_write_correct(num in any::<u64>()) {
             let mut write = Cursor::new(vec![0 as u8; 100]);
             write_vint(&mut write, num).unwrap();
             write.set_position(0);
-            num == read_vint(&mut write).unwrap()
+            assert!(num == read_vint(&mut write).unwrap())
         }
-    }
 
-    quickcheck!{
-        fn serializes_doc_correct(doc: Doc) -> bool {
+        #[test]
+        fn serializes_doc_correct(ref doc in arb_doc()) {
             let mut buf = Vec::new();
             doc.serialize(&mut Serializer::new(&mut buf)).unwrap();
             let mut de = Deserializer::new(&buf[..]);
-            doc == Deserialize::deserialize(&mut de).unwrap()
-
+            assert!(doc == &Deserialize::deserialize(&mut de).unwrap());
         }
     }
 }
