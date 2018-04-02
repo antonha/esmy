@@ -32,7 +32,7 @@ fn main() {
     let index = seg::Index::new(seg::SegmentSchema { features }, &index_path);
     let mut i = 0i64;
     let mut builder = index.new_segment();
-    for line in reader.lines().take(30_000_000) {
+    for line in reader.lines().take(300_000) {
         let body = line.unwrap();
         let mut doc = HashMap::new();
         doc.insert("text".to_owned(), seg::FieldValue::String(body));

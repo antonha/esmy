@@ -1,5 +1,5 @@
 use analyzis::Analyzer;
-use seg::{IndexReader, SegmentReader};
+use seg::{Doc, IndexReader, SegmentReader, FieldValue};
 use std::borrow::Cow;
 use std::io::Error;
 
@@ -26,6 +26,10 @@ pub trait SegmentQuery {
     ) -> Option<Box<Iterator<Item = Result<u64, Error>>>>;
 }
 
+pub trait FullDocQuery {
+    fn matches(&self, doc: &Doc) -> bool;
+}
+
 pub struct ValueQuery<'a> {
     field: &'a str,
     value: &'a str,
@@ -40,6 +44,15 @@ impl<'a> SegmentQuery for ValueQuery<'a> {
         match index.doc_iter(self.field, &self.value).unwrap() {
             Some(iter) => Some(Box::from(iter)),
             None => None,
+        }
+    }
+}
+
+impl<'a> FullDocQuery for ValueQuery<'a> {
+    fn matches(&self, doc: &Doc) -> bool{
+        match doc.get(self.field){
+            Some(&FieldValue::String(ref val)) => &val == &self.value,
+            None => false
         }
     }
 }
