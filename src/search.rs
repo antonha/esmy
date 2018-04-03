@@ -35,6 +35,12 @@ pub struct ValueQuery<'a> {
     value: &'a str,
 }
 
+impl <'a> ValueQuery<'a>{
+    pub fn new(field: &'a str, value: &'a str) -> ValueQuery<'a>{
+        ValueQuery{field, value}
+    }
+}
+
 impl<'a> SegmentQuery for ValueQuery<'a> {
     fn segment_matches(
         &self,
@@ -105,5 +111,26 @@ impl CountCollector {
 impl Collector for CountCollector {
     fn collect(&mut self, _reader: &SegmentReader, _doc_id: u64) {
         self.count += 1;
+    }
+}
+
+pub struct AllDocsCollector {
+    docs: Vec<Doc>,
+}
+
+impl AllDocsCollector {
+    pub fn new() -> AllDocsCollector {
+        AllDocsCollector { docs: Vec::new() }
+    }
+
+    pub fn docs(&self) -> &[Doc] {
+        &self.docs
+    }
+}
+
+impl Collector for AllDocsCollector {
+    fn collect(&mut self, reader: &SegmentReader, doc_id: u64) {
+        let doc = reader.full_doc().unwrap().read_doc(doc_id).unwrap();
+        self.docs.push(doc);
     }
 }
