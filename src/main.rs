@@ -32,13 +32,13 @@ fn main() {
     let index = seg::Index::new(seg::SegmentSchema { features }, &index_path);
     let mut i = 0i64;
     let mut builder = index.new_segment();
-    for line in reader.lines().take(300_000) {
+    for line in reader.lines().take(30_000) {
         let body = line.unwrap();
         let mut doc = HashMap::new();
         doc.insert("text".to_owned(), seg::FieldValue::String(body));
         builder.add_doc(doc);
         i += 1;
-        if i % 50000 == 0 {
+        if i % 5000 == 0 {
             builder.commit().unwrap();
             let used = time::now().sub(start_index).num_milliseconds();
             println!(
@@ -69,19 +69,18 @@ fn main() {
     let file2 = std::io::BufReader::new(&f2);
     let lines = file2.lines().take(100000).map(|l| l.unwrap());
     let analyzer = esmy::analyzis::UAX29Analyzer {};
-    for line in lines.take(100) {
+    for line in lines.take(1000) {
         let start_search = time::now();
         let mut collector = search::CountCollector::new();
-        search::search(
-            &index_reader,
-            &search::TextQuery::new("text", &line, &analyzer),
-            &mut collector,
-        ).unwrap();
+        let query = search::TextQuery::new("text", &line, &analyzer);
+        for _ in 0..10 {
+            search::search(&index_reader, &query, &mut collector).unwrap();
+        }
         println!(
             "Word '{}' had {} matches, took {} ms",
             line,
             collector.total_count(),
-            time::now().sub(start_search).num_milliseconds()
+            time::now().sub(start_search).num_milliseconds() as f32 / 10f32
         );
     }
 }

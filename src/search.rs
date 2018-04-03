@@ -1,5 +1,5 @@
 use analyzis::Analyzer;
-use seg::{Doc, IndexReader, SegmentReader, FieldValue};
+use seg::{Doc, FieldValue, IndexReader, SegmentReader};
 use std::borrow::Cow;
 use std::io::Error;
 
@@ -49,10 +49,10 @@ impl<'a> SegmentQuery for ValueQuery<'a> {
 }
 
 impl<'a> FullDocQuery for ValueQuery<'a> {
-    fn matches(&self, doc: &Doc) -> bool{
-        match doc.get(self.field){
+    fn matches(&self, doc: &Doc) -> bool {
+        match doc.get(self.field) {
             Some(&FieldValue::String(ref val)) => &val == &self.value,
-            None => false
+            None => false,
         }
     }
 }

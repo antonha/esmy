@@ -30,10 +30,7 @@ mod tests {
     }
 
     fn arb_fieldname() -> BoxedStrategy<String> {
-        prop_oneof![
-            Just("field1".to_owned()),
-            Just("field2".to_owned())
-        ].boxed()
+        prop_oneof![Just("field1".to_owned()), Just("field2".to_owned())].boxed()
     }
 
     fn arb_doc() -> BoxedStrategy<Doc> {

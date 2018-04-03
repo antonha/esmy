@@ -450,65 +450,73 @@ impl<'a> Feature for StringIndex {
                 path.exists()
             })
             .collect::<Vec<&SegmentInfo>>();
-        for segment in segments_to_merge.iter() {
-            let path = segment.address.path.join(format!(
-                "{}.{}.{}",
-                segment.address.name, self.field_name, TERM_ID_LISTING
-            ));
-            maps.push(unsafe { Map::from_path(path).unwrap() });
-        }
-
-        let mut op_builder = OpBuilder::new();
-        for map in maps.iter() {
-            op_builder.push(map.stream());
-        }
-
-        let mut source_id_doc_files = Vec::with_capacity(old_segments.len());
-        let ending = format!("{}.{}", self.field_name, ID_DOC_LISTING);
-
-        for old_segment in segments_to_merge {
-            source_id_doc_files.push(BufReader::new(old_segment.address.open_file(&ending)?));
-        }
-
-        let tid = new_segment.create_file(&format!("{}.{}", &self.field_name, TERM_ID_LISTING))?;
-        //TODO: Not unwrap
-        let mut tid_builder = MapBuilder::new(BufWriter::new(tid)).unwrap();
-        let fp = new_segment.create_file(&format!("{}.{}", self.field_name, ID_DOC_LISTING))?;
-        let mut iddoc = BufWriter::new(fp);
-
-        let mut new_offsets = Vec::with_capacity(old_segments.len());
         {
-            let mut new_offset = 0;
-            for segment in old_segments.iter() {
-                new_offsets.push(new_offset);
-                new_offset += segment.doc_count;
+            for segment in segments_to_merge.iter() {
+                let path = segment.address.path.join(format!(
+                    "{}.{}.{}",
+                    segment.address.name, self.field_name, TERM_ID_LISTING
+                ));
+                maps.push(unsafe { Map::from_path(path).unwrap() });
             }
-        }
 
-        let mut union = op_builder.union();
-        let mut offset = 0u64;
-        while let Some((term, term_offsets)) = union.next() {
-            tid_builder.insert(term, offset).unwrap();
-            let mut term_doc_counts: Vec<u64> = vec![0; old_segments.len()];
-            for term_offset in term_offsets {
-                let source_id_doc_file = &mut source_id_doc_files[term_offset.index];
-                source_id_doc_file.seek(SeekFrom::Start(term_offset.value as u64))?;
-                term_doc_counts[term_offset.index] = read_vint(source_id_doc_file)? as u64;
+            let mut op_builder = OpBuilder::new();
+            for map in maps.iter() {
+                op_builder.push(map.stream());
             }
-            let term_doc_count: u64 = term_doc_counts.iter().sum();
-            offset += write_vint(&mut iddoc, term_doc_count)? as u64;
 
-            for term_offset in term_offsets.iter() {
-                let source_id_doc_file = &mut source_id_doc_files[term_offset.index];
-                for _ in 0..term_doc_counts[term_offset.index] {
-                    let doc_id = read_vint(source_id_doc_file)?;
-                    offset +=
-                        write_vint(&mut iddoc, new_offsets[term_offset.index] + doc_id)? as u64;
+            let mut source_id_doc_files = Vec::with_capacity(old_segments.len());
+            let ending = format!("{}.{}", self.field_name, ID_DOC_LISTING);
+
+            for old_segment in &segments_to_merge {
+                source_id_doc_files.push(BufReader::new(old_segment.address.open_file(&ending)?));
+            }
+
+            let tid =
+                new_segment.create_file(&format!("{}.{}", &self.field_name, TERM_ID_LISTING))?;
+            //TODO: Not unwrap
+            let mut tid_builder = MapBuilder::new(BufWriter::new(tid)).unwrap();
+            let fp = new_segment.create_file(&format!("{}.{}", self.field_name, ID_DOC_LISTING))?;
+            let mut iddoc = BufWriter::new(fp);
+
+            let mut new_offsets = Vec::with_capacity(old_segments.len());
+            {
+                let mut new_offset = 0;
+                for segment in old_segments.iter() {
+                    new_offsets.push(new_offset);
+                    new_offset += segment.doc_count;
                 }
             }
+
+            let mut union = op_builder.union();
+            let mut offset = 0u64;
+            while let Some((term, term_offsets)) = union.next() {
+                tid_builder.insert(term, offset).unwrap();
+                let mut term_doc_counts: Vec<u64> = vec![0; old_segments.len()];
+                for term_offset in term_offsets {
+                    let source_id_doc_file = &mut source_id_doc_files[term_offset.index];
+                    source_id_doc_file.seek(SeekFrom::Start(term_offset.value as u64))?;
+                    term_doc_counts[term_offset.index] = read_vint(source_id_doc_file)? as u64;
+                }
+                let term_doc_count: u64 = term_doc_counts.iter().sum();
+                offset += write_vint(&mut iddoc, term_doc_count)? as u64;
+
+                for term_offset in term_offsets.iter() {
+                    let source_id_doc_file = &mut source_id_doc_files[term_offset.index];
+                    for _ in 0..term_doc_counts[term_offset.index] {
+                        let doc_id = read_vint(source_id_doc_file)?;
+                        offset +=
+                            write_vint(&mut iddoc, new_offsets[term_offset.index] + doc_id)? as u64;
+                    }
+                }
+            }
+            tid_builder.finish().unwrap();
         }
-        tid_builder.finish().unwrap();
-        //iddoc.sync_all()?;
+        for &s in &segments_to_merge {
+            s.address
+                .remove_file(&format!("{}.{}", &self.field_name, TERM_ID_LISTING))?;
+            s.address
+                .remove_file(&format!("{}.{}", &self.field_name, ID_DOC_LISTING))?;
+        }
         Ok(())
     }
 }
