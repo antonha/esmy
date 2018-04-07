@@ -1,4 +1,3 @@
-#![feature(conservative_impl_trait)]
 extern crate afsort;
 extern crate byteorder;
 extern crate fst;

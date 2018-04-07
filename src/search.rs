@@ -30,34 +30,41 @@ pub trait FullDocQuery {
     fn matches(&self, doc: &Doc) -> bool;
 }
 
-pub struct ValueQuery<'a> {
-    field: &'a str,
-    value: &'a str,
+#[derive(Debug, Clone)]
+pub struct ValueQuery {
+    field: String,
+    value: String,
 }
 
-impl <'a> ValueQuery<'a>{
-    pub fn new(field: &'a str, value: &'a str) -> ValueQuery<'a>{
-        ValueQuery{field, value}
+impl<'a> ValueQuery {
+    pub fn new(field: String, value: String) -> ValueQuery {
+        ValueQuery { field, value }
     }
 }
 
-impl<'a> SegmentQuery for ValueQuery<'a> {
+impl<'a> SegmentQuery for ValueQuery {
     fn segment_matches(
         &self,
         reader: &SegmentReader,
     ) -> Option<Box<Iterator<Item = Result<u64, Error>>>> {
-        let index = reader.string_index(self.field).unwrap();
-        match index.doc_iter(self.field, &self.value).unwrap() {
-            Some(iter) => Some(Box::from(iter)),
-            None => None,
+        match reader.string_index(&self.field) {
+            Some(index) => {
+                match index.doc_iter(&self.field, &self.value).unwrap() {
+                    Some(iter) => Some(Box::from(iter)),
+                    None => None
+                }
+            },
+            None => {
+                None
+            }
         }
     }
 }
 
-impl<'a> FullDocQuery for ValueQuery<'a> {
+impl FullDocQuery for ValueQuery {
     fn matches(&self, doc: &Doc) -> bool {
-        match doc.get(self.field) {
-            Some(&FieldValue::String(ref val)) => &val == &self.value,
+        match doc.get(&self.field) {
+            Some(&FieldValue::String(ref val)) => &self.value == val,
             None => false,
         }
     }

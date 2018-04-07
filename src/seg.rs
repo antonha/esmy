@@ -356,19 +356,18 @@ impl StringIndex {
                 }
             }
         }
+        afsort::sort_unstable_by(&mut terms, |t| t.0.as_bytes());
         terms
     }
 
     fn write_term_map(
         &self,
         address: &SegmentAddress,
-        mut term_map: Vec<(Cow<str>, u64)>,
+        terms: Vec<(Cow<str>, u64)>,
     ) -> Result<(), Error> {
-        if term_map.is_empty() {
+        if terms.is_empty() {
             return Ok(());
         }
-
-        afsort::sort_unstable_by(&mut term_map, |t| t.0.as_bytes());
 
         let mut offset: u64 = 0;
         let tid = address.create_file(&format!("{}.{}", &self.field_name, TERM_ID_LISTING))?;
@@ -376,8 +375,8 @@ impl StringIndex {
         let mut tid_builder = MapBuilder::new(BufWriter::new(tid)).unwrap();
         let mut iddoc = BufWriter::new(address.create_file(&format!("{}.{}", self.field_name, ID_DOC_LISTING))?);
         let mut ids = Vec::new();
-        let mut last_term = &term_map[0].0;
-        for &(ref term, id) in term_map.iter() {
+        let mut last_term = &terms[0].0;
+        for &(ref term, id) in terms.iter() {
             if term != last_term {
                 tid_builder.insert(&last_term.as_bytes(), offset).unwrap();
                 offset += write_vint(&mut iddoc, ids.len() as u64)? as u64;
@@ -385,9 +384,8 @@ impl StringIndex {
                     offset += write_vint(&mut iddoc, *id)? as u64;
                 }
                 ids.clear();
-            } else {
-                ids.push(id)
             }
+            ids.push(id);
             last_term = term;
         }
         tid_builder.insert(&last_term.as_bytes(), offset).unwrap();
@@ -396,6 +394,7 @@ impl StringIndex {
             offset += write_vint(&mut iddoc, *id)? as u64;
         }
         tid_builder.finish().unwrap();
+        iddoc.flush().unwrap();
         Ok(())
     }
 }
@@ -723,12 +722,12 @@ impl Feature for FullDoc {
     }
 
     fn write_segment(&self, address: &SegmentAddress, docs: &Vec<Doc>) -> Result<(), Error> {
-        let mut offset: u64 = 0;
+        let mut offset: u64;
         let mut doc_offsets = address.create_file("fdo")?;
         let mut docs_packed = address.create_file("fdv")?;
         for doc in docs {
-            doc_offsets.write_u64::<BigEndian>(offset)?;
             offset = docs_packed.seek(SeekFrom::Current(0))?;
+            doc_offsets.write_u64::<BigEndian>(offset)?;
             doc.serialize(&mut Serializer::new(&docs_packed)).unwrap();
         }
         doc_offsets.sync_all()?;
@@ -786,7 +785,7 @@ impl FeatureReader for FullDocReader {
 impl FullDocReader {
     pub fn read_doc(&self, docid: u64) -> Result<Doc, Error> {
         let mut offsets_file = self.address.open_file("fdo")?;
-        let mut values_file = self.address.open_file("fdo")?;
+        let mut values_file = self.address.open_file("fdv")?;
         offsets_file.seek(SeekFrom::Start(docid * 8))?;
         let offset = offsets_file.read_u64::<BigEndian>()?;
         values_file.seek(SeekFrom::Start(offset))?;
