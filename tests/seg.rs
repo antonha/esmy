@@ -131,12 +131,24 @@ mod tests {
                 }
                 for query in queries {
                     let expected_matches : Vec<Doc> = in_mem_docs.iter()
-                        .filter(|doc| query.matches(doc)).cloned().collect();
+                        .filter(|doc| query.matches(doc))
+                        .cloned()
+                        .collect();
                     let mut collector = AllDocsCollector::new();
                     search(&index.open_reader(), query, &mut collector).unwrap();
-                    assert_eq!(expected_matches.as_slice(), collector.docs());
+                    assert_same_docs(&expected_matches, collector.docs());
                 }
             }
+        }
+
+    }
+    fn assert_same_docs(expected: &[Doc], actual: &[Doc]) {
+        assert_eq!(expected.len(), actual.len());
+        for doc in actual {
+            assert!(expected.contains(doc), "Expected = {} did not contain {}")
+        }
+        for doc in expected {
+            assert!(actual.contains(doc), "Actual = {} did not contain {}")
         }
     }
 }

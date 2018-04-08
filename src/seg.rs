@@ -221,7 +221,7 @@ fn random_name() -> String {
     rand::thread_rng().gen_ascii_chars().take(10).collect()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FieldValue {
     String(String),
 }
