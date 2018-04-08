@@ -748,8 +748,8 @@ impl Feature for FullDoc {
         let mut target_val_file = new_segment.create_file("fdv")?;
         let mut base_offset = 0u64;
         for segment in old_segments.iter() {
-            let mut source_val_file = segment.address.open_file("fdv")?;
             let mut source_val_offset_file = segment.address.open_file("fdo")?;
+            let mut source_val_file = segment.address.open_file("fdv")?;
             loop {
                 match source_val_offset_file.read_u64::<BigEndian>() {
                     Ok(source_offset) => {
@@ -764,7 +764,7 @@ impl Feature for FullDoc {
                 }
             }
             io::copy(&mut source_val_file, &mut target_val_file)?;
-            base_offset += target_val_file.seek(SeekFrom::Current(0))?;
+            base_offset = target_val_file.seek(SeekFrom::Current(0))?;
         }
         target_val_file.sync_all()?;
         target_val_offset_file.sync_all()?;

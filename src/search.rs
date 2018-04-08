@@ -9,9 +9,9 @@ pub fn search(
     collector: &mut Collector,
 ) -> Result<(), Error> {
     for segment_reader in index_reader.segment_readers() {
-        match query.segment_matches(&segment_reader) {
+        match query.segment_matches(&segment_reader)? {
             Some(disi) => for doc in disi {
-                collector.collect(segment_reader, doc.unwrap());
+                collector.collect(segment_reader, doc?);
             },
             None => (),
         };
@@ -23,7 +23,7 @@ pub trait SegmentQuery {
     fn segment_matches(
         &self,
         reader: &SegmentReader,
-    ) -> Option<Box<Iterator<Item = Result<u64, Error>>>>;
+    ) -> Result<Option<Box<Iterator<Item = Result<u64, Error>>>>, Error>;
 }
 
 pub trait FullDocQuery {
@@ -46,13 +46,13 @@ impl<'a> SegmentQuery for ValueQuery {
     fn segment_matches(
         &self,
         reader: &SegmentReader,
-    ) -> Option<Box<Iterator<Item = Result<u64, Error>>>> {
+    ) -> Result<Option<Box<Iterator<Item = Result<u64, Error>>>>, Error> {
         match reader.string_index(&self.field) {
-            Some(index) => match index.doc_iter(&self.field, &self.value).unwrap() {
-                Some(iter) => Some(Box::from(iter)),
-                None => None,
+            Some(index) => match index.doc_iter(&self.field, &self.value)? {
+                Some(iter) => Ok(Some(Box::from(iter))),
+                None => Ok(None),
             },
-            None => None,
+            None => Ok(None),
         }
     }
 }
@@ -84,11 +84,11 @@ impl<'a> SegmentQuery for TextQuery<'a> {
     fn segment_matches(
         &self,
         reader: &SegmentReader,
-    ) -> Option<Box<Iterator<Item = Result<u64, Error>>>> {
+    ) -> Result<Option<Box<Iterator<Item = Result<u64, Error>>>>, Error> {
         let index = reader.string_index(self.field).unwrap();
-        match index.doc_iter(self.field, &self.values[0]).unwrap() {
-            Some(iter) => Some(Box::from(iter)),
-            None => None,
+        match index.doc_iter(self.field, &self.values[0])? {
+            Some(iter) => Ok(Some(Box::from(iter))),
+            None => Ok(None),
         }
     }
 }
