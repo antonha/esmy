@@ -11,7 +11,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Error, Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use walkdir::{WalkDir, WalkDirIterator};
 
 const TERM_ID_LISTING: &'static str = "tid";
@@ -23,7 +23,7 @@ pub trait FeatureReader {
 
 pub trait Feature: FeatureClone + Sync + Send {
     fn as_any(&self) -> &Any;
-    fn write_segment(&self, address: &SegmentAddress, docs: &Vec<Doc>) -> Result<(), Error>;
+    fn write_segment(&self, address: &SegmentAddress, docs: &[Doc]) -> Result<(), Error>;
     fn reader<'a>(&self, address: SegmentAddress) -> Box<FeatureReader>;
     fn merge_segments(
         &self,
@@ -68,9 +68,9 @@ pub struct SegmentInfo {
     doc_count: u64,
 }
 
-pub struct Index<'a> {
+pub struct Index {
     schema_template: SegmentSchema,
-    path: &'a Path,
+    path: PathBuf,
 }
 
 impl SegmentAddress {
@@ -95,8 +95,8 @@ impl SegmentAddress {
     }
 }
 
-impl<'a> Index<'a> {
-    pub fn new(schema_template: SegmentSchema, path: &'a Path) -> Index<'a> {
+impl Index {
+    pub fn new(schema_template: SegmentSchema, path: PathBuf) -> Index {
         Index {
             schema_template,
             path,
@@ -106,15 +106,23 @@ impl<'a> Index<'a> {
     pub fn new_segment(&self) -> SegmentBuilder {
         SegmentBuilder::new(
             self.schema_template.clone(),
-            SegmentAddress {
-                path: PathBuf::from(self.path),
-                name: self::random_name(),
-            },
+            self.new_address()
         )
     }
 
+    pub fn new_address(&self) -> SegmentAddress {
+            SegmentAddress {
+                path: PathBuf::from(&self.path),
+                name: self::random_name(),
+            }
+    }
+
+    pub fn schema_template(&self) -> &SegmentSchema {
+        &self.schema_template
+    }
+
     pub fn list_segments(&self) -> Vec<SegmentAddress> {
-        let walker = WalkDir::new(self.path)
+        let walker = WalkDir::new(&self.path)
             .min_depth(1)
             .max_depth(1)
             .into_iter();
@@ -137,7 +145,7 @@ impl<'a> Index<'a> {
                         .unwrap(),
                 );
                 SegmentAddress {
-                    path: PathBuf::from(self.path),
+                    path: PathBuf::from(&self.path),
                     name: name,
                 }
             })
@@ -145,7 +153,7 @@ impl<'a> Index<'a> {
     }
 
     pub fn open_reader(&self) -> IndexReader {
-        let walker = WalkDir::new(self.path)
+        let walker = WalkDir::new(&self.path)
             .min_depth(1)
             .max_depth(1)
             .into_iter();
@@ -168,7 +176,7 @@ impl<'a> Index<'a> {
                         .unwrap(),
                 );
                 let address = SegmentAddress {
-                    path: PathBuf::from(self.path),
+                    path: PathBuf::from(&self.path),
                     name: name,
                 };
                 SegmentReader::new(self.schema_template.clone(), address)
@@ -191,7 +199,7 @@ impl<'a> Index<'a> {
             });
         }
         let new_segment_address = SegmentAddress {
-            path: PathBuf::from(self.path),
+            path: PathBuf::from(&self.path),
             name: random_name(),
         };
         for feature in self.schema_template.features.iter() {
@@ -234,6 +242,7 @@ pub struct SegmentBuilder {
     docs: Vec<Doc>,
 }
 
+
 impl SegmentBuilder {
     pub fn new(schema: SegmentSchema, address: SegmentAddress) -> SegmentBuilder {
         SegmentBuilder {
@@ -252,16 +261,20 @@ impl SegmentBuilder {
     }
 
     pub fn commit(&self) -> Result<(), Error> {
-        if self.docs.is_empty() {
-            return Ok(());
-        }
-        for feature in &self.schema.features {
-            feature.write_segment(&self.address, &self.docs)?;
-        }
-        let mut file = self.address.create_file("seg")?;
-        write_vint(&mut file, self.docs.len() as u64)?;
-        Ok(())
+        write_seg(&self.schema, &self.address, &self.docs)
     }
+}
+
+pub fn write_seg(schema: &SegmentSchema, address: &SegmentAddress, docs: &[Doc]) -> Result<(), Error> {
+    if docs.is_empty() {
+        return Ok(());
+    }
+    for feature in &schema.features {
+        feature.write_segment(address, docs)?;
+    }
+    let mut file = address.create_file("seg")?;
+    write_vint(&mut file, docs.len() as u64)?;
+    Ok(())
 }
 
 #[allow(dead_code)]
@@ -342,7 +355,7 @@ impl StringIndex {
 }
 
 impl StringIndex {
-    fn docs_to_term_map<'a>(&self, docs: &'a Vec<Doc>) -> Vec<(Cow<'a, str>, u64)> {
+    fn docs_to_term_map<'a>(&self, docs: &'a [Doc]) -> Vec<(Cow<'a, str>, u64)> {
         let mut terms: Vec<(Cow<'a, str>, u64)> = Vec::new();
         {
             for (doc_id, doc) in docs.iter().enumerate() {
@@ -404,7 +417,7 @@ impl<'a> Feature for StringIndex {
         self
     }
 
-    fn write_segment(&self, address: &SegmentAddress, docs: &Vec<Doc>) -> Result<(), Error> {
+    fn write_segment(&self, address: &SegmentAddress, docs: &[Doc]) -> Result<(), Error> {
         let term_map = self.docs_to_term_map(docs);
         self.write_term_map(address, term_map)
     }
@@ -596,7 +609,7 @@ impl Feature for StringValues {
         self
     }
 
-    fn write_segment(&self, address: &SegmentAddress, docs: &Vec<Doc>) -> Result<(), Error> {
+    fn write_segment(&self, address: &SegmentAddress, docs: &[Doc]) -> Result<(), Error> {
         let mut offset: u64 = 0;
         let mut di = address.create_file(&format!("{}.{}", self.field_name, "di"))?;
         let mut dv = address.create_file(&format!("{}.{}", self.field_name, "dv"))?;
@@ -721,7 +734,7 @@ impl Feature for FullDoc {
         self
     }
 
-    fn write_segment(&self, address: &SegmentAddress, docs: &Vec<Doc>) -> Result<(), Error> {
+    fn write_segment(&self, address: &SegmentAddress, docs: &[Doc]) -> Result<(), Error> {
         let mut offset: u64;
         let mut doc_offsets = address.create_file("fdo")?;
         let mut docs_packed = address.create_file("fdv")?;
