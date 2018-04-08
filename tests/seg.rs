@@ -6,13 +6,13 @@ extern crate proptest;
 
 #[cfg(test)]
 mod tests {
+    use esmy::analyzis::NoopAnalyzer;
     use esmy::search::{search, AllDocsCollector, FullDocQuery, ValueQuery};
     use esmy::seg;
-    use esmy::seg::StringIndex;
     use esmy::seg::Doc;
     use esmy::seg::FieldValue;
     use esmy::seg::FullDoc;
-    use esmy::analyzis::NoopAnalyzer;
+    use esmy::seg::StringIndex;
     use proptest::collection::hash_map;
     use proptest::collection::vec;
     use proptest::prelude::*;
@@ -48,25 +48,34 @@ mod tests {
     }
 
     fn query(vec: Vec<(String, String)>) -> BoxedStrategy<ValueQuery> {
-        (0..vec.len()).prop_map(move|i|{
-            let (ref key, ref val) = vec[i];
-            ValueQuery::new(key.clone(), val.clone())
-        }).boxed()
+        (0..vec.len())
+            .prop_map(move |i| {
+                let (ref key, ref val) = vec[i];
+                ValueQuery::new(key.clone(), val.clone())
+            })
+            .boxed()
     }
 
     fn op_and_queries() -> BoxedStrategy<(Vec<IndexOperation>, Vec<ValueQuery>)> {
-        vec(arb_index_op(), 0..10).prop_flat_map (|ops| {
-            let values = extract_values(&ops);
-            vec(query(values.clone()), 0..100).prop_map(move|queries| (ops.clone(), queries))
-        }).boxed()
+        vec(arb_index_op(), 0..10)
+            .prop_flat_map(|ops| {
+                let values = extract_values(&ops);
+                if (values.len() > 0) {
+                    vec(query(values.clone()), 0..100)
+                        .prop_map(move |queries| (ops.clone(), queries)).boxed()
+                } else {
+                    Just((ops.clone(), Vec::new())).boxed()
+                }
+            })
+            .boxed()
     }
 
     fn extract_values(ops: &[IndexOperation]) -> Vec<(String, String)> {
-        let mut values : Vec<(String, String)> = Vec::new();
-        for op in ops{
+        let mut values: Vec<(String, String)> = Vec::new();
+        for op in ops {
             match op {
                 IndexOperation::Index(docs) => {
-                    for doc in docs{
+                    for doc in docs {
                         for (name, value) in doc {
                             match value {
                                 FieldValue::String(str_val) => {
@@ -76,7 +85,7 @@ mod tests {
                         }
                     }
                 }
-                _ => ()
+                _ => (),
             }
         }
         values
@@ -115,16 +124,15 @@ mod tests {
                         in_mem_seg_docs = Vec::new()
                     },
                     &IndexOperation::Merge => {
-                        //TODO merging not working somehow
                         let segments = &index.list_segments();
-                        //index.merge(segments).expect("Could not merge segments");
+                        index.merge(segments).expect("Could not merge segments");
                     }
                 }
                 for query in queries {
                     let expected_matches : Vec<Doc> = in_mem_docs.iter().filter(|doc| query.matches(doc)).cloned().collect();
                     let mut collector = AllDocsCollector::new();
                     search(&index.open_reader(), query, &mut collector).unwrap();
-                    assert!(collector.docs() == expected_matches.as_slice() );
+                    assert_eq!(expected_matches.as_slice(), collector.docs());
                 }
             }
         }

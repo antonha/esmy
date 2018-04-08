@@ -1,8 +1,8 @@
 use afsort;
 use analyzis::Analyzer;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use fst::{Map, MapBuilder, Streamer};
 use fst::map::OpBuilder;
+use fst::{Map, MapBuilder, Streamer};
 use rand::{self, Rng};
 use rmps::{Deserializer, Serializer};
 use serde::{self, Deserialize, Serialize};

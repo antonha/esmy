@@ -12,6 +12,6 @@ extern crate serde;
 #[macro_use]
 extern crate proptest;
 
-pub mod seg;
 pub mod analyzis;
 pub mod search;
+pub mod seg;

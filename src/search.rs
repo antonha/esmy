@@ -48,15 +48,11 @@ impl<'a> SegmentQuery for ValueQuery {
         reader: &SegmentReader,
     ) -> Option<Box<Iterator<Item = Result<u64, Error>>>> {
         match reader.string_index(&self.field) {
-            Some(index) => {
-                match index.doc_iter(&self.field, &self.value).unwrap() {
-                    Some(iter) => Some(Box::from(iter)),
-                    None => None
-                }
+            Some(index) => match index.doc_iter(&self.field, &self.value).unwrap() {
+                Some(iter) => Some(Box::from(iter)),
+                None => None,
             },
-            None => {
-                None
-            }
+            None => None,
         }
     }
 }
