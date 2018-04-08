@@ -60,9 +60,10 @@ mod tests {
         vec(arb_index_op(), 0..10)
             .prop_flat_map(|ops| {
                 let values = extract_values(&ops);
-                if (values.len() > 0) {
+                if values.len() > 0 {
                     vec(query(values.clone()), 0..100)
-                        .prop_map(move |queries| (ops.clone(), queries)).boxed()
+                        .prop_map(move |queries| (ops.clone(), queries))
+                        .boxed()
                 } else {
                     Just((ops.clone(), Vec::new())).boxed()
                 }
@@ -129,7 +130,8 @@ mod tests {
                     }
                 }
                 for query in queries {
-                    let expected_matches : Vec<Doc> = in_mem_docs.iter().filter(|doc| query.matches(doc)).cloned().collect();
+                    let expected_matches : Vec<Doc> = in_mem_docs.iter()
+                        .filter(|doc| query.matches(doc)).cloned().collect();
                     let mut collector = AllDocsCollector::new();
                     search(&index.open_reader(), query, &mut collector).unwrap();
                     assert_eq!(expected_matches.as_slice(), collector.docs());
