@@ -106,7 +106,7 @@ mod tests {
                 Box::new(StringIndex::new("field2", Box::from(NoopAnalyzer{}))),
                 Box::new(FullDoc::new()),
             ];
-            let index = seg::Index::new(seg::SegmentSchema{features}, &index_path);
+            let index = seg::Index::new(seg::SegmentSchema{features}, index_path);
             let mut builder = index.new_segment();
             let mut in_mem_docs = Vec::new();
             let mut in_mem_seg_docs = Vec::new();
