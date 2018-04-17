@@ -104,17 +104,14 @@ impl Index {
     }
 
     pub fn new_segment(&self) -> SegmentBuilder {
-        SegmentBuilder::new(
-            self.schema_template.clone(),
-            self.new_address()
-        )
+        SegmentBuilder::new(self.schema_template.clone(), self.new_address())
     }
 
     pub fn new_address(&self) -> SegmentAddress {
-            SegmentAddress {
-                path: PathBuf::from(&self.path),
-                name: self::random_name(),
-            }
+        SegmentAddress {
+            path: PathBuf::from(&self.path),
+            name: self::random_name(),
+        }
     }
 
     pub fn schema_template(&self) -> &SegmentSchema {
@@ -242,7 +239,6 @@ pub struct SegmentBuilder {
     docs: Vec<Doc>,
 }
 
-
 impl SegmentBuilder {
     pub fn new(schema: SegmentSchema, address: SegmentAddress) -> SegmentBuilder {
         SegmentBuilder {
@@ -265,7 +261,11 @@ impl SegmentBuilder {
     }
 }
 
-pub fn write_seg(schema: &SegmentSchema, address: &SegmentAddress, docs: &[Doc]) -> Result<(), Error> {
+pub fn write_seg(
+    schema: &SegmentSchema,
+    address: &SegmentAddress,
+    docs: &[Doc],
+) -> Result<(), Error> {
     if docs.is_empty() {
         return Ok(());
     }
@@ -873,10 +873,10 @@ impl<'de> Visitor<'de> for FieldValueVisitor {
 #[cfg(test)]
 mod tests {
 
-    use super::Doc;
-    use super::FieldValue;
     use super::read_vint;
     use super::write_vint;
+    use super::Doc;
+    use super::FieldValue;
     use proptest::collection::hash_map;
     use proptest::prelude::*;
     use rmps::{Deserializer, Serializer};

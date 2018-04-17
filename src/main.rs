@@ -2,8 +2,8 @@ extern crate esmy;
 extern crate time;
 
 use esmy::analyzis::WhiteSpaceAnalyzer;
-use esmy::search;
 use esmy::index_manager::IndexManager;
+use esmy::search;
 use esmy::seg::{self, FullDoc, StringIndex};
 use std::collections::HashMap;
 use std::env;
@@ -37,7 +37,7 @@ fn main() {
         let mut doc = HashMap::new();
         doc.insert("text".to_owned(), seg::FieldValue::String(body));
         index_manager.add_doc(doc);
-        i+=1;
+        i += 1;
         if i % 50000 == 0 {
             let used = time::now().sub(start_index).num_milliseconds();
             println!(
