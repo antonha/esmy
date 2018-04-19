@@ -1,0 +1,11 @@
+[package]
+name = "esmy_cli"
+version = "0.1.0"
+authors = ["Anton Hägerstrand <anton.hagerstrand@gmail.com>"]
+
+[dependencies]
+time = "0.1"
+esmy = { version = "0.1.0", path = "../esmy" }
+
+[profile.release]
+debug = true
