@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Anton Hägerstrand <anton.hagerstrand@gmail.com>"]
 
 [dependencies]
-byteorder = "0.5"
+byteorder = "1"
 time = "0.1"
 fst = "0.3"
 rand = "0.3"
