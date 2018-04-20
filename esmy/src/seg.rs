@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Error, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
-use walkdir::{WalkDir};
+use walkdir::WalkDir;
 
 const TERM_ID_LISTING: &'static str = "tid";
 const ID_DOC_LISTING: &'static str = "iddoc";
