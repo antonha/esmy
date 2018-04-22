@@ -8,7 +8,8 @@ use clap::{App, Arg, SubCommand};
 use esmy::analyzis::UAX29Analyzer;
 use esmy::index_manager::IndexManager;
 use esmy::search;
-use esmy::seg::{self, Doc, FullDoc, StringIndex};
+use esmy::search::Collector;
+use esmy::seg::{self, Doc, FullDoc, StringIndex, SegmentReader};
 use std::ops::Sub;
 use std::path::PathBuf;
 
@@ -39,8 +40,8 @@ fn main() {
                     ),
             )
             .subcommand(
-                SubCommand::with_name("search")
-                    .about("Searches for documents.")
+                SubCommand::with_name("list")
+                    .about("Lists all documents matching a query.")
                     .arg(
                         Arg::with_name("path").short("p").default_value(".").help(
                             "The path to index at. Defaults to the current working directory.",
@@ -100,7 +101,7 @@ fn main() {
             );
         }
     }
-    if let Some(matches) = matches.subcommand_matches("search") {
+    if let Some(matches) = matches.subcommand_matches("list") {
         let index_path = PathBuf::from(matches.value_of("path").unwrap());
         let query_string = matches.value_of("QUERY").unwrap();
 
@@ -111,18 +112,26 @@ fn main() {
         let index = seg::Index::new(seg::SegmentSchema { features }, index_path);
         let index_reader = index.open_reader();
         let analyzer = esmy::analyzis::UAX29Analyzer {};
-        let start_search = time::now();
-        let mut collector = search::AllDocsCollector::new();
         let query = search::TextQuery::new("body", &query_string, &analyzer);
+        let mut collector = PrintAllCollector::new();
         search::search(&index_reader, &query, &mut collector).unwrap();
-        println!(
-            "Word '{}' had {} matches, took {} ms",
-            query_string,
-            collector.docs().len(),
-            time::now().sub(start_search).num_milliseconds() as f32
-        );
-        for doc in collector.docs().iter().take(5) {
-            println!("{:?}", doc)
-        }
+    }
+}
+
+struct PrintAllCollector {
+}
+
+impl PrintAllCollector{
+    pub fn new() -> PrintAllCollector {
+        PrintAllCollector { }
+    }
+}
+
+impl Collector for PrintAllCollector {
+
+    fn collect(&mut self, reader: &SegmentReader, doc_id: u64) {
+        let doc = reader.full_doc().unwrap().read_doc(doc_id).unwrap();
+        serde_json::to_writer(std::io::stdout(), &doc).unwrap();
+        println!();
     }
 }
