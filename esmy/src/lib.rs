@@ -9,6 +9,9 @@ extern crate walkdir;
 extern crate rmp_serde as rmps;
 extern crate serde;
 
+#[macro_use]
+extern crate serde_derive;
+
 #[cfg(test)]
 #[macro_use]
 extern crate proptest;

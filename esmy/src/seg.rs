@@ -1,10 +1,13 @@
 use afsort;
 use analyzis::Analyzer;
+use analyzis::UAX29Analyzer;
+use analyzis::NoopAnalyzer;
+use analyzis::WhiteSpaceAnalyzer;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use fst::map::OpBuilder;
 use fst::{Map, MapBuilder, Streamer};
 use rand::{self, Rng};
-use rmps::{Deserializer, Serializer};
+use rmps;
 use serde::{self, Deserialize, Serialize};
 use std::any::Any;
 use std::borrow::Cow;
@@ -17,11 +20,36 @@ use walkdir::WalkDir;
 const TERM_ID_LISTING: &'static str = "tid";
 const ID_DOC_LISTING: &'static str = "iddoc";
 
-pub trait FeatureReader {
-    fn as_any(&self) -> &Any;
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum FeatureConfig {
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    String(String),
+    Map(HashMap<String, FeatureConfig>),
+}
+
+impl FeatureConfig {
+    fn str_at(&self, path: &str) -> Option<&str> {
+        if let FeatureConfig::Map(map) = self {
+            if let Some(field) = map.get(path) {
+                if let FeatureConfig::String(value) = field {
+                    return Some(&value);
+                }
+            }
+        }
+        return None;
+    }
 }
 
 pub trait Feature: FeatureClone + Sync + Send {
+    fn feature_type(&self) -> &'static str;
+    //TODO add error for faulty configs
+    fn from_config(FeatureConfig) -> Self
+    where
+        Self: Sized;
+    fn to_config(&self) -> FeatureConfig;
     fn as_any(&self) -> &Any;
     fn write_segment(&self, address: &SegmentAddress, docs: &[Doc]) -> Result<(), Error>;
     fn reader<'a>(&self, address: SegmentAddress) -> Box<FeatureReader>;
@@ -32,9 +60,14 @@ pub trait Feature: FeatureClone + Sync + Send {
     ) -> Result<(), Error>;
 }
 
+pub trait FeatureReader {
+    fn as_any(&self) -> &Any;
+}
+
 pub trait FeatureClone {
     fn clone_box(&self) -> Box<Feature>;
 }
+
 impl<T> FeatureClone for T
 where
     T: 'static + Feature + Clone,
@@ -50,6 +83,18 @@ impl Clone for Box<Feature> {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct FeatureMeta {
+    feature_type: String,
+    feature_config: FeatureConfig
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SegmentMeta {
+    feature_metas: Vec<FeatureMeta>,
+    doc_count: u64,
+}
+
 #[derive(Clone)]
 pub struct SegmentSchema {
     pub features: Vec<Box<Feature>>,
@@ -61,7 +106,7 @@ pub struct SegmentAddress {
     name: String,
 }
 
-#[allow(dead_code)]
+#[derive(Clone)]
 pub struct SegmentInfo {
     address: SegmentAddress,
     schema: SegmentSchema,
@@ -150,6 +195,7 @@ impl Index {
     }
 
     pub fn open_reader(&self) -> IndexReader {
+        //TODO duplication, horrible error handling
         let walker = WalkDir::new(&self.path)
             .min_depth(1)
             .max_depth(1)
@@ -176,7 +222,19 @@ impl Index {
                     path: PathBuf::from(&self.path),
                     name: name,
                 };
-                SegmentReader::new(self.schema_template.clone(), address)
+                let seg_file = address.open_file("seg").unwrap();
+                let segment_meta : SegmentMeta = rmps::from_read(seg_file).unwrap();
+                let mut features = Vec::new();
+                for feature_meta in segment_meta.feature_metas {
+                    let feature : Box<Feature> = match feature_meta.feature_type.as_ref() {
+                        "full_doc" => Box::new(FullDoc::from_config(feature_meta.feature_config)),
+                        "string_index" => Box::new(StringIndex::from_config(feature_meta.feature_config)),
+                    //TODO error handling
+                    _ => panic!("No such feature")
+                    };
+                    features.push(feature);
+                }
+                SegmentReader::new(SegmentSchema{features}, address)
             })
             .collect::<Vec<SegmentReader>>();
         IndexReader {
@@ -188,11 +246,25 @@ impl Index {
         let mut infos: Vec<SegmentInfo> = Vec::with_capacity(addresses.len());
         for address in addresses {
             let mut seg_file = address.open_file("seg")?;
-            let doc_count = read_vint(&mut seg_file)?;
+            let segment_meta : SegmentMeta = rmps::from_read(seg_file).unwrap();
+
+
+            let mut features = Vec::new();
+            for feature_meta in segment_meta.feature_metas {
+                let feature : Box<Feature> = match feature_meta.feature_type.as_ref() {
+                    "full_doc" => Box::new(FullDoc::from_config(feature_meta.feature_config)),
+                    "string_index" => Box::new(StringIndex::from_config(feature_meta.feature_config)),
+                    //TODO error handling
+                    _ => panic!("No such feature")
+                };
+                features.push(feature);
+            }
+
+
             infos.push(SegmentInfo {
                 address: address.clone(),
-                schema: self.schema_template.clone(),
-                doc_count,
+                schema: SegmentSchema{ features },
+                doc_count: segment_meta.doc_count,
             });
         }
         let new_segment_address = SegmentAddress {
@@ -203,8 +275,19 @@ impl Index {
             feature.merge_segments(&infos, &new_segment_address)?;
         }
         let doc_count: u64 = infos.iter().map(|i| i.doc_count).sum();
+        let mut feature_metas = Vec::new();
+        for feature in &self.schema_template.features {
+            feature_metas.push(FeatureMeta{
+                feature_type: feature.feature_type().to_string(), 
+                feature_config: feature.to_config() 
+        });
+        }
+        let segment_meta = SegmentMeta {
+            feature_metas,
+            doc_count
+        };
         let mut file = new_segment_address.create_file("seg")?;
-        write_vint(&mut file, doc_count)?;
+        rmps::encode::write(&mut file, &segment_meta).unwrap();
         for address in addresses {
             address.remove_file("seg")?;
         }
@@ -272,8 +355,19 @@ pub fn write_seg(
     for feature in &schema.features {
         feature.write_segment(address, docs)?;
     }
+    let mut feature_metas = Vec::new();
+    for feature in &schema.features {
+        feature_metas.push(FeatureMeta{
+            feature_type: feature.feature_type().to_string(), 
+            feature_config: feature.to_config() 
+        });
+    }
+    let segment_meta = SegmentMeta {
+        feature_metas,
+        doc_count: docs.len() as u64
+    };
     let mut file = address.create_file("seg")?;
-    write_vint(&mut file, docs.len() as u64)?;
+    rmps::encode::write(&mut file, &segment_meta).unwrap();
     Ok(())
 }
 
@@ -295,11 +389,11 @@ impl SegmentReader {
         }
     }
 
-    pub fn string_index(&self, field_name: &str) -> Option<&StringIndexReader> {
+    pub fn string_index(&self, field_name: &str, analyzer: &Analyzer) -> Option<&StringIndexReader> {
         for reader in self.readers.iter() {
             match reader.as_any().downcast_ref::<StringIndexReader>() {
                 Some(reader) => {
-                    if reader.feature.field_name == field_name {
+                    if reader.feature.field_name == field_name && analyzer.analyzer_type() == reader.feature.analyzer.analyzer_type() {
                         return Some(reader);
                     }
                 }
@@ -398,9 +492,35 @@ impl StringIndex {
     }
 }
 
-impl<'a> Feature for StringIndex {
+impl Feature for StringIndex {
     fn as_any(&self) -> &Any {
         self
+    }
+
+    fn feature_type(&self) -> &'static str {
+        "string_index"
+    }
+
+    fn from_config(config: FeatureConfig) -> Self {
+        let field_name = config.str_at("name").unwrap().to_string();
+        let analyzer_name = config.str_at("analyzer").unwrap();
+        let analyzer : Box<Analyzer> = match analyzer_name {
+            "uax29" => Box::new(UAX29Analyzer),
+            "whitespace" => Box::new(WhiteSpaceAnalyzer),
+            "noop" => Box::new(NoopAnalyzer),
+            _ => panic!("No such analyzer")
+        };
+        StringIndex{
+            field_name,
+            analyzer
+        }
+    }
+
+    fn to_config(&self) -> FeatureConfig {
+        let mut map = HashMap::new();
+        map.insert("name".to_string(), FeatureConfig::String(self.field_name.to_string()));
+        map.insert("analyzer".to_string(), FeatureConfig::String(self.analyzer.analyzer_type().to_string()));
+        FeatureConfig::Map(map)
     }
 
     fn write_segment(&self, address: &SegmentAddress, docs: &[Doc]) -> Result<(), Error> {
@@ -587,6 +707,18 @@ impl Feature for FullDoc {
     fn as_any(&self) -> &Any {
         self
     }
+    
+    fn feature_type(&self) -> &'static str {
+        "full_doc"
+    }
+
+    fn from_config(_config: FeatureConfig) -> Self {
+        FullDoc {}
+    }
+
+    fn to_config(&self) -> FeatureConfig {
+        FeatureConfig::Map(HashMap::new())
+    }
 
     fn write_segment(&self, address: &SegmentAddress, docs: &[Doc]) -> Result<(), Error> {
         let mut offset: u64;
@@ -595,7 +727,7 @@ impl Feature for FullDoc {
         for doc in docs {
             offset = docs_packed.seek(SeekFrom::Current(0))?;
             doc_offsets.write_u64::<BigEndian>(offset)?;
-            doc.serialize(&mut Serializer::new(&docs_packed)).unwrap();
+            doc.serialize(&mut rmps::Serializer::new(&docs_packed)).unwrap();
         }
         doc_offsets.sync_all()?;
         docs_packed.sync_all()?;
@@ -656,7 +788,7 @@ impl FullDocReader {
         offsets_file.seek(SeekFrom::Start(docid * 8))?;
         let offset = offsets_file.read_u64::<BigEndian>()?;
         values_file.seek(SeekFrom::Start(offset))?;
-        Ok(Deserialize::deserialize(&mut Deserializer::new(values_file)).unwrap())
+        Ok(rmps::from_read(values_file).unwrap())
     }
 }
 

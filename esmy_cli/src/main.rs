@@ -9,7 +9,7 @@ use esmy::analyzis::UAX29Analyzer;
 use esmy::index_manager::IndexManager;
 use esmy::search;
 use esmy::search::Collector;
-use esmy::seg::{self, Doc, FullDoc, StringIndex, SegmentReader};
+use esmy::seg::{self, Doc, FullDoc, SegmentReader, StringIndex};
 use std::ops::Sub;
 use std::path::PathBuf;
 
@@ -118,17 +118,15 @@ fn main() {
     }
 }
 
-struct PrintAllCollector {
-}
+struct PrintAllCollector {}
 
-impl PrintAllCollector{
+impl PrintAllCollector {
     pub fn new() -> PrintAllCollector {
-        PrintAllCollector { }
+        PrintAllCollector {}
     }
 }
 
 impl Collector for PrintAllCollector {
-
     fn collect(&mut self, reader: &SegmentReader, doc_id: u64) {
         let doc = reader.full_doc().unwrap().read_doc(doc_id).unwrap();
         serde_json::to_writer(std::io::stdout(), &doc).unwrap();

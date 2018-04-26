@@ -1,4 +1,5 @@
 use analyzis::Analyzer;
+use analyzis::NoopAnalyzer;
 use seg::{Doc, FieldValue, IndexReader, SegmentReader};
 use std::borrow::Cow;
 use std::io::Error;
@@ -47,7 +48,7 @@ impl<'a> SegmentQuery for ValueQuery {
         &self,
         reader: &SegmentReader,
     ) -> Result<Option<Box<Iterator<Item = Result<u64, Error>>>>, Error> {
-        match reader.string_index(&self.field) {
+        match reader.string_index(&self.field, &NoopAnalyzer) {
             Some(index) => match index.doc_iter(&self.field, &self.value)? {
                 Some(iter) => Ok(Some(Box::from(iter))),
                 None => Ok(None),
@@ -69,13 +70,15 @@ impl FullDocQuery for ValueQuery {
 pub struct TextQuery<'a> {
     field: &'a str,
     values: Vec<Cow<'a, str>>,
+    analyzer: &'a Analyzer
 }
 
 impl<'a> TextQuery<'a> {
-    pub fn new<'n>(field: &'n str, value: &'n str, analyzer: &Analyzer) -> TextQuery<'n> {
+    pub fn new<'n>(field: &'n str, value: &'n str, analyzer: &'n Analyzer) -> TextQuery<'n> {
         TextQuery {
             field: field,
             values: analyzer.analyze(value).collect::<Vec<Cow<str>>>(),
+            analyzer
         }
     }
 }
@@ -85,7 +88,7 @@ impl<'a> SegmentQuery for TextQuery<'a> {
         &self,
         reader: &SegmentReader,
     ) -> Result<Option<Box<Iterator<Item = Result<u64, Error>>>>, Error> {
-        let index = reader.string_index(self.field).unwrap();
+        let index = reader.string_index(self.field, self.analyzer).unwrap();
         match index.doc_iter(self.field, &self.values[0])? {
             Some(iter) => Ok(Some(Box::from(iter))),
             None => Ok(None),

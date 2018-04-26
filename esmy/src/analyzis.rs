@@ -3,12 +3,14 @@ use std::iter;
 use unicode_segmentation::UnicodeSegmentation;
 
 pub trait Analyzer: AnalyzerClone + Send + Sync {
+    fn analyzer_type(&self) -> &'static str;
     fn analyze<'a>(&self, value: &'a str) -> Box<Iterator<Item = Cow<'a, str>> + 'a>;
 }
 
 pub trait AnalyzerClone {
     fn clone_box(&self) -> Box<Analyzer>;
 }
+
 impl<T> AnalyzerClone for T
 where
     T: 'static + Analyzer + Clone,
@@ -25,9 +27,14 @@ impl Clone for Box<Analyzer> {
 }
 
 #[derive(Clone)]
-pub struct UAX29Analyzer {}
+pub struct UAX29Analyzer;
 
 impl Analyzer for UAX29Analyzer {
+
+    fn analyzer_type(&self) -> &'static str{
+        "uax29"
+    }
+
     fn analyze<'a>(&self, value: &'a str) -> Box<Iterator<Item = Cow<'a, str>> + 'a> {
         Box::from(
             value
@@ -54,31 +61,31 @@ fn is_only_whitespace_or_control_char(s: &str) -> bool {
 }
 
 #[derive(Clone)]
-pub struct WhiteSpaceAnalyzer {}
+pub struct WhiteSpaceAnalyzer;
 impl Analyzer for WhiteSpaceAnalyzer {
+    
+    fn analyzer_type(&self) -> &'static str{
+        "whitespace"
+    }
+
     fn analyze<'a>(&self, value: &'a str) -> Box<Iterator<Item = Cow<'a, str>> + 'a> {
         Box::from(
             value
                 .split_whitespace()
-                .filter(|token| has_words_or_digit(token))
                 .map(|s| Cow::Borrowed(s)),
         )
     }
 }
 
-fn has_words_or_digit(s: &str) -> bool {
-    for c in s.chars() {
-        if c.is_alphanumeric() {
-            return true;
-        }
-    }
-    return false;
-}
-
 #[derive(Clone)]
-pub struct NoopAnalyzer {}
+pub struct NoopAnalyzer;
 
 impl Analyzer for NoopAnalyzer {
+    
+    fn analyzer_type(&self) -> &'static str{
+        "noop"
+    }
+
     fn analyze<'a>(&self, value: &'a str) -> Box<Iterator<Item = Cow<'a, str>> + 'a> {
         Box::from(iter::once(Cow::Borrowed(value)))
     }
