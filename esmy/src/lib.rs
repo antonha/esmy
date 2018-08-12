@@ -17,6 +17,8 @@ extern crate serde_derive;
 extern crate proptest;
 
 pub mod analyzis;
+mod error;
 pub mod index_manager;
 pub mod search;
 pub mod seg;
+pub use error::Error;

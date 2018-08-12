@@ -1,7 +1,8 @@
+use super::Error;
 use afsort;
 use analyzis::Analyzer;
-use analyzis::UAX29Analyzer;
 use analyzis::NoopAnalyzer;
+use analyzis::UAX29Analyzer;
 use analyzis::WhiteSpaceAnalyzer;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use fst::map::OpBuilder;
@@ -13,7 +14,7 @@ use std::any::Any;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{self, BufReader, BufWriter, Error, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
@@ -86,7 +87,7 @@ impl Clone for Box<Feature> {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FeatureMeta {
     feature_type: String,
-    feature_config: FeatureConfig
+    feature_config: FeatureConfig,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -100,7 +101,7 @@ pub struct SegmentSchema {
     pub features: Vec<Box<Feature>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct SegmentAddress {
     path: PathBuf,
     name: String,
@@ -108,18 +109,54 @@ pub struct SegmentAddress {
 
 #[derive(Clone)]
 pub struct SegmentInfo {
-    address: SegmentAddress,
-    schema: SegmentSchema,
-    doc_count: u64,
+    pub address: SegmentAddress,
+    pub schema: SegmentSchema,
+    pub doc_count: u64,
 }
 
+#[derive(Clone)]
 pub struct Index {
-    schema_template: SegmentSchema,
+    pub schema_template: SegmentSchema,
     path: PathBuf,
 }
 
 impl SegmentAddress {
-    fn create_file(&self, ending: &str) -> Result<File, Error> {
+    pub fn read_info(&self) -> Result<SegmentInfo, Error> {
+        let seg_file = self.open_file("seg")?;
+        let segment_meta: SegmentMeta = rmps::from_read(seg_file)?;
+
+        let mut features = Vec::new();
+        for feature_meta in segment_meta.feature_metas {
+            let feature: Box<Feature> = match feature_meta.feature_type.as_ref() {
+                "full_doc" => Box::new(FullDoc::from_config(feature_meta.feature_config)),
+                "string_index" => Box::new(StringIndex::from_config(feature_meta.feature_config)),
+                //TODO error handling
+                _ => panic!("No such feature"),
+            };
+            features.push(feature);
+        }
+
+        return Ok(SegmentInfo {
+            address: self.clone(),
+            schema: SegmentSchema { features },
+            doc_count: segment_meta.doc_count,
+        });
+    }
+
+    pub fn remove_files(&self) -> Result<(), io::Error> {
+        let dir = fs::read_dir(&self.path)?;
+        for path_res in dir {
+            let entry = path_res?;
+            if entry.file_type()?.is_file()
+                && entry.file_name().to_string_lossy().starts_with(&self.name)
+            {
+                fs::remove_file(&entry.path())?
+            }
+        }
+        Ok(())
+    }
+
+    fn create_file(&self, ending: &str) -> Result<File, io::Error> {
         if !self.path.exists() {
             fs::create_dir_all(&self.path).unwrap();
         }
@@ -127,13 +164,13 @@ impl SegmentAddress {
         File::create(self.path.join(name))
     }
 
-    fn open_file(&self, ending: &str) -> Result<File, Error> {
+    fn open_file(&self, ending: &str) -> Result<File, io::Error> {
         let name = format!("{}.{}", self.name, ending);
         let file = self.path.join(name);
         File::open(file)
     }
 
-    fn remove_file(&self, ending: &str) -> Result<(), Error> {
+    fn remove_file(&self, ending: &str) -> Result<(), io::Error> {
         let name = format!("{}.{}", self.name, ending);
         let file = self.path.join(name);
         fs::remove_file(file)
@@ -169,11 +206,11 @@ impl Index {
             .max_depth(1)
             .into_iter();
         let entries = walker.filter_entry(|e| {
-            e.file_type().is_dir()
-                || e.file_name()
-                    .to_str()
-                    .map(|s| s.ends_with(".seg"))
-                    .unwrap_or(false)
+            e.file_type().is_dir() || e
+                .file_name()
+                .to_str()
+                .map(|s| s.ends_with(".seg"))
+                .unwrap_or(false)
         });
         entries
             .map(|e| {
@@ -188,10 +225,9 @@ impl Index {
                 );
                 SegmentAddress {
                     path: PathBuf::from(&self.path),
-                    name: name,
+                    name,
                 }
-            })
-            .collect::<Vec<SegmentAddress>>()
+            }).collect::<Vec<SegmentAddress>>()
     }
 
     pub fn open_reader(&self) -> IndexReader {
@@ -201,11 +237,11 @@ impl Index {
             .max_depth(1)
             .into_iter();
         let entries = walker.filter_entry(|e| {
-            e.file_type().is_dir()
-                || e.file_name()
-                    .to_str()
-                    .map(|s| s.ends_with(".seg"))
-                    .unwrap_or(false)
+            e.file_type().is_dir() || e
+                .file_name()
+                .to_str()
+                .map(|s| s.ends_with(".seg"))
+                .unwrap_or(false)
         });
         let segments = entries
             .map(|e| {
@@ -223,47 +259,48 @@ impl Index {
                     name: name,
                 };
                 let seg_file = address.open_file("seg").unwrap();
-                let segment_meta : SegmentMeta = rmps::from_read(seg_file).unwrap();
+                let segment_meta: SegmentMeta = rmps::from_read(seg_file).unwrap();
                 let mut features = Vec::new();
                 for feature_meta in segment_meta.feature_metas {
-                    let feature : Box<Feature> = match feature_meta.feature_type.as_ref() {
+                    let feature: Box<Feature> = match feature_meta.feature_type.as_ref() {
                         "full_doc" => Box::new(FullDoc::from_config(feature_meta.feature_config)),
-                        "string_index" => Box::new(StringIndex::from_config(feature_meta.feature_config)),
-                    //TODO error handling
-                    _ => panic!("No such feature")
+                        "string_index" => {
+                            Box::new(StringIndex::from_config(feature_meta.feature_config))
+                        }
+                        //TODO error handling
+                        _ => panic!("No such feature"),
                     };
                     features.push(feature);
                 }
-                SegmentReader::new(SegmentSchema{features}, address)
-            })
-            .collect::<Vec<SegmentReader>>();
+                SegmentReader::new(SegmentSchema { features }, address)
+            }).collect::<Vec<SegmentReader>>();
         IndexReader {
             segment_readers: segments,
         }
     }
 
-    pub fn merge(&self, addresses: &[SegmentAddress]) -> Result<(), Error> {
+    pub fn merge(&self, addresses: &[&SegmentAddress]) -> Result<SegmentAddress, Error> {
         let mut infos: Vec<SegmentInfo> = Vec::with_capacity(addresses.len());
-        for address in addresses {
+        for address in addresses.into_iter() {
             let mut seg_file = address.open_file("seg")?;
-            let segment_meta : SegmentMeta = rmps::from_read(seg_file).unwrap();
-
+            let segment_meta: SegmentMeta = rmps::from_read(seg_file)?;
 
             let mut features = Vec::new();
             for feature_meta in segment_meta.feature_metas {
-                let feature : Box<Feature> = match feature_meta.feature_type.as_ref() {
+                let feature: Box<Feature> = match feature_meta.feature_type.as_ref() {
                     "full_doc" => Box::new(FullDoc::from_config(feature_meta.feature_config)),
-                    "string_index" => Box::new(StringIndex::from_config(feature_meta.feature_config)),
+                    "string_index" => {
+                        Box::new(StringIndex::from_config(feature_meta.feature_config))
+                    }
                     //TODO error handling
-                    _ => panic!("No such feature")
+                    _ => panic!("No such feature"),
                 };
                 features.push(feature);
             }
 
-
             infos.push(SegmentInfo {
-                address: address.clone(),
-                schema: SegmentSchema{ features },
+                address: (*address).clone(),
+                schema: SegmentSchema { features },
                 doc_count: segment_meta.doc_count,
             });
         }
@@ -277,21 +314,21 @@ impl Index {
         let doc_count: u64 = infos.iter().map(|i| i.doc_count).sum();
         let mut feature_metas = Vec::new();
         for feature in &self.schema_template.features {
-            feature_metas.push(FeatureMeta{
-                feature_type: feature.feature_type().to_string(), 
-                feature_config: feature.to_config() 
-        });
+            feature_metas.push(FeatureMeta {
+                feature_type: feature.feature_type().to_string(),
+                feature_config: feature.to_config(),
+            });
         }
         let segment_meta = SegmentMeta {
             feature_metas,
-            doc_count
+            doc_count,
         };
         let mut file = new_segment_address.create_file("seg")?;
         rmps::encode::write(&mut file, &segment_meta).unwrap();
         for address in addresses {
             address.remove_file("seg")?;
         }
-        Ok(())
+        Ok(new_segment_address)
     }
 }
 
@@ -357,14 +394,14 @@ pub fn write_seg(
     }
     let mut feature_metas = Vec::new();
     for feature in &schema.features {
-        feature_metas.push(FeatureMeta{
-            feature_type: feature.feature_type().to_string(), 
-            feature_config: feature.to_config() 
+        feature_metas.push(FeatureMeta {
+            feature_type: feature.feature_type().to_string(),
+            feature_config: feature.to_config(),
         });
     }
     let segment_meta = SegmentMeta {
         feature_metas,
-        doc_count: docs.len() as u64
+        doc_count: docs.len() as u64,
     };
     let mut file = address.create_file("seg")?;
     rmps::encode::write(&mut file, &segment_meta).unwrap();
@@ -389,11 +426,17 @@ impl SegmentReader {
         }
     }
 
-    pub fn string_index(&self, field_name: &str, analyzer: &Analyzer) -> Option<&StringIndexReader> {
+    pub fn string_index(
+        &self,
+        field_name: &str,
+        analyzer: &Analyzer,
+    ) -> Option<&StringIndexReader> {
         for reader in self.readers.iter() {
             match reader.as_any().downcast_ref::<StringIndexReader>() {
                 Some(reader) => {
-                    if reader.feature.field_name == field_name && analyzer.analyzer_type() == reader.feature.analyzer.analyzer_type() {
+                    if reader.feature.field_name == field_name
+                        && analyzer.analyzer_type() == reader.feature.analyzer.analyzer_type()
+                    {
                         return Some(reader);
                     }
                 }
@@ -449,7 +492,7 @@ impl StringIndex {
                 }
             }
         }
-        afsort::sort_unstable_by(&mut terms, |t| t.0.as_bytes());
+        afsort::sort_unstable_by(&mut terms, |t| &t.0);
         terms
     }
 
@@ -466,7 +509,9 @@ impl StringIndex {
         let tid = address.create_file(&format!("{}.{}", &self.field_name, TERM_ID_LISTING))?;
         //TODO: Not unwrap
         let mut tid_builder = MapBuilder::new(BufWriter::new(tid)).unwrap();
-        let mut iddoc = BufWriter::new(address.create_file(&format!("{}.{}", self.field_name, ID_DOC_LISTING))?);
+        let mut iddoc = BufWriter::new(
+            address.create_file(&format!("{}.{}", self.field_name, ID_DOC_LISTING))?,
+        );
         let mut ids = Vec::new();
         let mut last_term = &terms[0].0;
         for &(ref term, id) in terms.iter() {
@@ -504,22 +549,28 @@ impl Feature for StringIndex {
     fn from_config(config: FeatureConfig) -> Self {
         let field_name = config.str_at("name").unwrap().to_string();
         let analyzer_name = config.str_at("analyzer").unwrap();
-        let analyzer : Box<Analyzer> = match analyzer_name {
+        let analyzer: Box<Analyzer> = match analyzer_name {
             "uax29" => Box::new(UAX29Analyzer),
             "whitespace" => Box::new(WhiteSpaceAnalyzer),
             "noop" => Box::new(NoopAnalyzer),
-            _ => panic!("No such analyzer")
+            _ => panic!("No such analyzer"),
         };
-        StringIndex{
+        StringIndex {
             field_name,
-            analyzer
+            analyzer,
         }
     }
 
     fn to_config(&self) -> FeatureConfig {
         let mut map = HashMap::new();
-        map.insert("name".to_string(), FeatureConfig::String(self.field_name.to_string()));
-        map.insert("analyzer".to_string(), FeatureConfig::String(self.analyzer.analyzer_type().to_string()));
+        map.insert(
+            "name".to_string(),
+            FeatureConfig::String(self.field_name.to_string()),
+        );
+        map.insert(
+            "analyzer".to_string(),
+            FeatureConfig::String(self.analyzer.analyzer_type().to_string()),
+        );
         FeatureConfig::Map(map)
     }
 
@@ -566,8 +617,7 @@ impl Feature for StringIndex {
                     s.address.name, self.field_name, TERM_ID_LISTING
                 ));
                 path.exists()
-            })
-            .collect::<Vec<&SegmentInfo>>();
+            }).collect::<Vec<&SegmentInfo>>();
         {
             for segment in segments_to_merge.iter() {
                 let path = segment.address.path.join(format!(
@@ -628,12 +678,7 @@ impl Feature for StringIndex {
                 }
             }
             tid_builder.finish().unwrap();
-        }
-        for &s in &segments_to_merge {
-            s.address
-                .remove_file(&format!("{}.{}", &self.field_name, TERM_ID_LISTING))?;
-            s.address
-                .remove_file(&format!("{}.{}", &self.field_name, ID_DOC_LISTING))?;
+            iddoc.flush()?;
         }
         Ok(())
     }
@@ -657,8 +702,10 @@ impl StringIndexReader {
         match maybe_offset {
             None => Ok(None),
             Some(offset) => {
-                let mut iddoc = BufReader::new(self.address
-                    .open_file(&format!("{}.{}", field, ID_DOC_LISTING))?);
+                let mut iddoc = BufReader::new(
+                    self.address
+                        .open_file(&format!("{}.{}", field, ID_DOC_LISTING))?,
+                );
                 iddoc.seek(SeekFrom::Start(offset as u64))?;
                 let num = read_vint(&mut iddoc)?;
                 Ok(Some(DocIter {
@@ -707,7 +754,7 @@ impl Feature for FullDoc {
     fn as_any(&self) -> &Any {
         self
     }
-    
+
     fn feature_type(&self) -> &'static str {
         "full_doc"
     }
@@ -722,15 +769,16 @@ impl Feature for FullDoc {
 
     fn write_segment(&self, address: &SegmentAddress, docs: &[Doc]) -> Result<(), Error> {
         let mut offset: u64;
-        let mut doc_offsets = address.create_file("fdo")?;
+        let mut doc_offsets = BufWriter::new(address.create_file("fdo")?);
         let mut docs_packed = address.create_file("fdv")?;
         for doc in docs {
             offset = docs_packed.seek(SeekFrom::Current(0))?;
             doc_offsets.write_u64::<BigEndian>(offset)?;
-            doc.serialize(&mut rmps::Serializer::new(&docs_packed)).unwrap();
+            doc.serialize(&mut rmps::Serializer::new(&docs_packed))
+                .unwrap();
         }
-        doc_offsets.sync_all()?;
-        docs_packed.sync_all()?;
+        doc_offsets.flush()?;
+        docs_packed.flush()?;
         Ok(())
     }
 
@@ -743,30 +791,31 @@ impl Feature for FullDoc {
         old_segments: &[SegmentInfo],
         new_segment: &SegmentAddress,
     ) -> Result<(), Error> {
-        let mut target_val_offset_file = new_segment.create_file("fdo")?;
+        let mut target_val_offset_file = BufWriter::new(new_segment.create_file("fdo")?);
         let mut target_val_file = new_segment.create_file("fdv")?;
         let mut base_offset = 0u64;
         for segment in old_segments.iter() {
-            let mut source_val_offset_file = segment.address.open_file("fdo")?;
-            let mut source_val_file = segment.address.open_file("fdv")?;
+            let mut source_val_offset_file = BufReader::new(segment.address.open_file("fdo")?);
             loop {
                 match source_val_offset_file.read_u64::<BigEndian>() {
                     Ok(source_offset) => {
-                        target_val_offset_file.write_u64::<BigEndian>(base_offset + source_offset)?;
+                        target_val_offset_file
+                            .write_u64::<BigEndian>(base_offset + source_offset)?;
                     }
                     Err(error) => {
                         if error.kind() != io::ErrorKind::UnexpectedEof {
-                            return Err(error);
+                            return Err(Error::IOError);
                         }
                         break;
                     }
                 }
             }
+            let mut source_val_file = segment.address.open_file("fdv")?;
             io::copy(&mut source_val_file, &mut target_val_file)?;
             base_offset = target_val_file.seek(SeekFrom::Current(0))?;
         }
-        target_val_file.sync_all()?;
-        target_val_offset_file.sync_all()?;
+        target_val_file.flush()?;
+        target_val_offset_file.flush()?;
         Ok(())
     }
 }

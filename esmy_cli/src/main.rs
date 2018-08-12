@@ -26,59 +26,55 @@ fn main() {
                         Arg::with_name("path").short("p").default_value(".").help(
                             "The path to index at. Defaults to the current working directory.",
                         ),
-                    )
-                    .arg(
+                    ).arg(
                         Arg::with_name("clear")
                             .short("c")
                             .help("If the index path should be cleared before indexing.."),
-                    )
-                    .arg(
+                    ).arg(
                         Arg::with_name("v")
                             .short("v")
                             .multiple(true)
                             .help("Sets the level of verbosity"),
                     ),
-            )
-            .subcommand(
+            ).subcommand(
                 SubCommand::with_name("list")
                     .about("Lists all documents matching a query.")
                     .arg(
                         Arg::with_name("path").short("p").default_value(".").help(
                             "The path to index at. Defaults to the current working directory.",
                         ),
-                    )
-                    .arg(
+                    ).arg(
                         Arg::with_name("QUERY")
                             .required(true)
                             .index(1)
                             .help("If the index path should be cleared before indexing.."),
                     ),
-            )
-            .get_matches();
+            ).get_matches();
 
     if let Some(matches) = matches.subcommand_matches("index") {
         let index_path = PathBuf::from(matches.value_of("path").unwrap());
         let verbose = matches.occurrences_of("v") > 0;
-        let clear = matches.is_present("c");
+        let clear = matches.is_present("clear");
 
         if verbose {
             eprintln!("Will index into '{:?}'", &index_path);
         }
+        if clear && index_path.exists() {
+            std::fs::remove_dir_all(&index_path).unwrap();
+        }
         if !index_path.exists() {
             std::fs::create_dir_all(&index_path).unwrap()
-        } else if clear {
-            std::fs::remove_dir_all(&index_path).unwrap()
         }
         let features: Vec<Box<seg::Feature>> = vec![
             Box::new(StringIndex::new("body", Box::from(UAX29Analyzer {}))),
             Box::new(FullDoc::new()),
         ];
         let index = seg::Index::new(seg::SegmentSchema { features }, index_path);
-        let mut index_manager = IndexManager::new(index);
+        let mut index_manager = IndexManager::open(index).unwrap();
         let start_index = time::now();
-        let stream = serde_json::Deserializer::from_reader(std::io::BufReader::new(
-            std::io::stdin(),
-        )).into_iter::<Doc>();
+        let stream =
+            serde_json::Deserializer::from_reader(std::io::BufReader::new(std::io::stdin()))
+                .into_iter::<Doc>();
         let mut i = 0i64;
         for doc in stream {
             index_manager.add_doc(doc.unwrap());

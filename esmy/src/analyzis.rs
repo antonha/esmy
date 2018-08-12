@@ -30,8 +30,7 @@ impl Clone for Box<Analyzer> {
 pub struct UAX29Analyzer;
 
 impl Analyzer for UAX29Analyzer {
-
-    fn analyzer_type(&self) -> &'static str{
+    fn analyzer_type(&self) -> &'static str {
         "uax29"
     }
 
@@ -63,17 +62,12 @@ fn is_only_whitespace_or_control_char(s: &str) -> bool {
 #[derive(Clone)]
 pub struct WhiteSpaceAnalyzer;
 impl Analyzer for WhiteSpaceAnalyzer {
-    
-    fn analyzer_type(&self) -> &'static str{
+    fn analyzer_type(&self) -> &'static str {
         "whitespace"
     }
 
     fn analyze<'a>(&self, value: &'a str) -> Box<Iterator<Item = Cow<'a, str>> + 'a> {
-        Box::from(
-            value
-                .split_whitespace()
-                .map(|s| Cow::Borrowed(s)),
-        )
+        Box::from(value.split_whitespace().map(|s| Cow::Borrowed(s)))
     }
 }
 
@@ -81,8 +75,7 @@ impl Analyzer for WhiteSpaceAnalyzer {
 pub struct NoopAnalyzer;
 
 impl Analyzer for NoopAnalyzer {
-    
-    fn analyzer_type(&self) -> &'static str{
+    fn analyzer_type(&self) -> &'static str {
         "noop"
     }
 

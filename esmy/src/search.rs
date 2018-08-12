@@ -1,8 +1,8 @@
+use super::Error;
 use analyzis::Analyzer;
 use analyzis::NoopAnalyzer;
 use seg::{Doc, FieldValue, IndexReader, SegmentReader};
 use std::borrow::Cow;
-use std::io::Error;
 
 pub fn search(
     index_reader: &IndexReader,
@@ -70,7 +70,7 @@ impl FullDocQuery for ValueQuery {
 pub struct TextQuery<'a> {
     field: &'a str,
     values: Vec<Cow<'a, str>>,
-    analyzer: &'a Analyzer
+    analyzer: &'a Analyzer,
 }
 
 impl<'a> TextQuery<'a> {
@@ -78,7 +78,7 @@ impl<'a> TextQuery<'a> {
         TextQuery {
             field: field,
             values: analyzer.analyze(value).collect::<Vec<Cow<str>>>(),
-            analyzer
+            analyzer,
         }
     }
 }

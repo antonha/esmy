@@ -52,8 +52,7 @@ mod tests {
             .prop_map(move |i| {
                 let (ref key, ref val) = vec[i];
                 ValueQuery::new(key.clone(), val.clone())
-            })
-            .boxed()
+            }).boxed()
     }
 
     fn op_and_queries() -> BoxedStrategy<(Vec<IndexOperation>, Vec<ValueQuery>)> {
@@ -67,8 +66,7 @@ mod tests {
                 } else {
                     Just((ops.clone(), Vec::new())).boxed()
                 }
-            })
-            .boxed()
+            }).boxed()
     }
 
     fn extract_values(ops: &[IndexOperation]) -> Vec<(String, String)> {
