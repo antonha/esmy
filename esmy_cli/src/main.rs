@@ -105,8 +105,10 @@ fn main() {
             Box::new(StringIndex::new("body", Box::from(UAX29Analyzer {}))),
             Box::new(FullDoc::new()),
         ];
-        let index = seg::Index::new(seg::SegmentSchema { features }, index_path);
-        let index_reader = index.open_reader();
+        let index_manager =
+            IndexManager::open(seg::Index::new(seg::SegmentSchema { features }, index_path))
+                .unwrap();
+        let index_reader = index_manager.open_reader();
         let analyzer = esmy::analyzis::UAX29Analyzer {};
         let query = search::TextQuery::new("body", &query_string, &analyzer);
         let mut collector = PrintAllCollector::new();

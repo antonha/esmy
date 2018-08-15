@@ -230,55 +230,6 @@ impl Index {
             }).collect::<Vec<SegmentAddress>>()
     }
 
-    pub fn open_reader(&self) -> IndexReader {
-        //TODO duplication, horrible error handling
-        let walker = WalkDir::new(&self.path)
-            .min_depth(1)
-            .max_depth(1)
-            .into_iter();
-        let entries = walker.filter_entry(|e| {
-            e.file_type().is_dir() || e
-                .file_name()
-                .to_str()
-                .map(|s| s.ends_with(".seg"))
-                .unwrap_or(false)
-        });
-        let segments = entries
-            .map(|e| {
-                let name = String::from(
-                    e.unwrap()
-                        .file_name()
-                        .to_str()
-                        .unwrap()
-                        .split(".")
-                        .next()
-                        .unwrap(),
-                );
-                let address = SegmentAddress {
-                    path: PathBuf::from(&self.path),
-                    name: name,
-                };
-                let seg_file = address.open_file("seg").unwrap();
-                let segment_meta: SegmentMeta = rmps::from_read(seg_file).unwrap();
-                let mut features = Vec::new();
-                for feature_meta in segment_meta.feature_metas {
-                    let feature: Box<Feature> = match feature_meta.feature_type.as_ref() {
-                        "full_doc" => Box::new(FullDoc::from_config(feature_meta.feature_config)),
-                        "string_index" => {
-                            Box::new(StringIndex::from_config(feature_meta.feature_config))
-                        }
-                        //TODO error handling
-                        _ => panic!("No such feature"),
-                    };
-                    features.push(feature);
-                }
-                SegmentReader::new(SegmentSchema { features }, address)
-            }).collect::<Vec<SegmentReader>>();
-        IndexReader {
-            segment_readers: segments,
-        }
-    }
-
     pub fn merge(&self, addresses: &[&SegmentAddress]) -> Result<SegmentAddress, Error> {
         let mut infos: Vec<SegmentInfo> = Vec::with_capacity(addresses.len());
         for address in addresses.into_iter() {
@@ -408,20 +359,19 @@ pub fn write_seg(
     Ok(())
 }
 
-#[allow(dead_code)]
 pub struct SegmentReader {
-    address: SegmentAddress,
+    //address: SegmentAddress,
     readers: Vec<Box<FeatureReader>>,
 }
 
 impl SegmentReader {
-    pub fn new(schema: SegmentSchema, address: SegmentAddress) -> SegmentReader {
+    pub fn new(info: SegmentInfo) -> SegmentReader {
         SegmentReader {
-            address: address.clone(),
-            readers: schema
+            readers: info
+                .schema
                 .features
-                .into_iter()
-                .map(|feature| feature.reader(address.clone()))
+                .iter()
+                .map(|feature| feature.reader(info.address.clone()))
                 .collect(),
         }
     }

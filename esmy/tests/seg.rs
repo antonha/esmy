@@ -8,6 +8,7 @@ extern crate proptest;
 mod tests {
     use esmy::analyzis::NoopAnalyzer;
     use esmy::search::{search, AllDocsCollector, FullDocQuery, ValueQuery};
+    use esmy::index_manager::IndexManagerBuilder;
     use esmy::seg;
     use esmy::seg::Doc;
     use esmy::seg::FieldValue;
@@ -105,26 +106,24 @@ mod tests {
                 Box::new(FullDoc::new()),
             ];
             let index = seg::Index::new(seg::SegmentSchema{features}, index_path);
-            let mut builder = index.new_segment();
+            let index_manager = IndexManagerBuilder::new().auto_commit(false).auto_merge(false).open(index).expect("Could not open index.");
             let mut in_mem_docs = Vec::new();
             let mut in_mem_seg_docs = Vec::new();
             for op in ops {
                 match op {
                     &IndexOperation::Index(ref docs) => {
                         for doc in docs{
-                            builder.add_doc(doc.clone());
+                            index_manager.add_doc(doc.clone());
                             in_mem_seg_docs.push(doc.clone());
                         }
                     },
                     &IndexOperation::Commit => {
-                        builder.commit().expect("Failed to commit segment");
-                        builder = index.new_segment();
+                        index_manager.commit().expect("Could not commit segments.");
                         in_mem_docs.append(&mut in_mem_seg_docs);
                         in_mem_seg_docs = Vec::new()
                     },
                     &IndexOperation::Merge => {
-                        let segments = &index.list_segments();
-                        index.merge(segments).expect("Could not merge segments");
+                        index_manager.merge();
                     }
                 }
                 for query in queries {
@@ -133,7 +132,7 @@ mod tests {
                         .cloned()
                         .collect();
                     let mut collector = AllDocsCollector::new();
-                    search(&index.open_reader(), query, &mut collector).unwrap();
+                    search(&index_manager.open_reader(), query, &mut collector).unwrap();
                     assert_same_docs(&expected_matches, collector.docs());
                 }
             }

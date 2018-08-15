@@ -1,11 +1,12 @@
 use super::Error;
 use analyzis::Analyzer;
 use analyzis::NoopAnalyzer;
-use seg::{Doc, FieldValue, IndexReader, SegmentReader};
+use index_manager::ManagedIndexReader;
+use seg::{Doc, FieldValue, SegmentReader};
 use std::borrow::Cow;
 
 pub fn search(
-    index_reader: &IndexReader,
+    index_reader: &ManagedIndexReader,
     query: &SegmentQuery,
     collector: &mut Collector,
 ) -> Result<(), Error> {

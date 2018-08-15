@@ -2,21 +2,21 @@ use super::Error;
 use seg::write_seg;
 use seg::Doc;
 use seg::Index;
-use seg::IndexReader;
-use seg::{SegmentAddress, SegmentInfo};
-use std::collections::HashSet;
+use seg::{SegmentAddress, SegmentInfo, SegmentReader};
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::mem;
+use std::sync::atomic;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::sync::RwLock;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic;
 use std::thread::sleep;
 use std::time::Duration;
 use threadpool::ThreadPool;
 
 pub struct IndexManager {
+    options: IndexManagerOptions,
     index: Index,
     state: Arc<RwLock<IndexState>>,
     pub pool: ThreadPool,
@@ -37,7 +37,7 @@ impl SegRef {
     fn new(info: SegmentInfo) -> SegRef {
         SegRef {
             info,
-            delete_on_drop: AtomicBool::new(false)
+            delete_on_drop: AtomicBool::new(false),
         }
     }
 }
@@ -71,13 +71,57 @@ impl Drop for SegRef {
     }
 }
 
+struct IndexManagerOptions{
+    auto_commit: bool,
+    auto_merge: bool
+}
+
+pub struct IndexManagerBuilder{
+    options: IndexManagerOptions
+}
+
+impl IndexManagerBuilder{
+    pub fn new() -> IndexManagerBuilder{
+        IndexManagerBuilder{
+            options: IndexManagerOptions{
+                auto_commit: true,
+                auto_merge: true
+            }
+        }
+    }
+
+    pub fn auto_commit(mut self, val: bool) -> IndexManagerBuilder{
+        self.options.auto_commit = true;
+        self
+    }
+
+    pub fn auto_merge(mut self, val: bool) -> IndexManagerBuilder{
+        self.options.auto_commit = true;
+        self
+    }
+
+    pub fn open(self, index: Index) -> Result<IndexManager, Error>{
+        IndexManager::open_with_options(index, self.options)
+    }
+
+}
+
 impl IndexManager {
-    pub fn open(index: Index) -> Result<IndexManager, Error> {
+
+    pub fn open(index: Index) -> Result<IndexManager, Error>{
+        IndexManagerBuilder::new().open(index)
+    }
+
+    fn open_with_options(index: Index, options: IndexManagerOptions) -> Result<IndexManager, Error> {
         let mut segments = HashMap::new();
         for segment_address in index.list_segments() {
-            segments.insert(segment_address.clone(), Arc::from(SegRef::new(segment_address.read_info()?)));
+            segments.insert(
+                segment_address.clone(),
+                Arc::from(SegRef::new(segment_address.read_info()?)),
+            );
         }
         Ok(IndexManager {
+            options,
             index,
             state: Arc::new(RwLock::new(IndexState {
                 docs_to_index: Vec::new(),
@@ -88,17 +132,13 @@ impl IndexManager {
         })
     }
 
-    pub fn open_reader(&self) -> IndexReader {
-        self.index.open_reader()
-    }
-
     pub fn add_doc(&self, doc: Doc) {
         self.wait_jobs(5);
         //TODO long-term goal here is to add to some transaction log instead of just adding to in-memory
         {
             let mut local_state = self.state.write().unwrap();
             local_state.docs_to_index.push(doc);
-            if local_state.docs_to_index.len() > 10000 {
+            if self.options.auto_commit && local_state.docs_to_index.len() > 10000 {
                 let to_commit = mem::replace(&mut local_state.docs_to_index, Vec::new());
                 let schema = self.index.schema_template().clone();
                 let address = self.index.new_address();
@@ -106,11 +146,14 @@ impl IndexManager {
                 self.pool.execute(move || {
                     write_seg(&schema, &address, &to_commit).unwrap();
                     let mut local_state = state.write().unwrap();
-                    local_state
-                        .active_segments
-                        .insert(address.clone(), Arc::new(SegRef::new(address.read_info().unwrap())));
+                    local_state.active_segments.insert(
+                        address.clone(),
+                        Arc::new(SegRef::new(address.read_info().unwrap())),
+                    );
                 });
-                self.submit_merges(&mut local_state);
+                if self.options.auto_merge{
+                    self.submit_merges(&mut local_state);
+                }
             }
         }
     }
@@ -119,20 +162,33 @@ impl IndexManager {
         {
             self.wait_jobs(0);
             let mut local_state = self.state.write().unwrap();
-            let address = self.index.new_address();
-            write_seg(
-                &self.index.schema_template(),
-                &address,
-                &local_state.docs_to_index,
-            )?;
-            local_state
-                .active_segments
-                .insert(address.clone(), Arc::new(SegRef::new(address.read_info().unwrap())));
-            local_state.docs_to_index = Vec::new();
-            self.submit_merges(&mut local_state);
+            if !local_state.docs_to_index.is_empty(){
+                let address = self.index.new_address();
+                write_seg(
+                    &self.index.schema_template(),
+                    &address,
+                    &local_state.docs_to_index,
+                )?;
+                local_state.active_segments.insert(
+                    address.clone(),
+                    Arc::new(SegRef::new(address.read_info().unwrap())),
+                );
+                local_state.docs_to_index = Vec::new();
+                if self.options.auto_merge{
+                    self.submit_merges(&mut local_state);
+                }
+
+            }
         }
         self.wait_jobs(0);
         Ok(())
+    }
+
+    pub fn merge(&self){
+        self.wait_jobs(0);
+        let mut local_state = self.state.write().unwrap();
+        self.submit_merges(&mut local_state);
+        self.wait_jobs(0)
     }
 
     fn submit_merges(&self, state: &mut IndexState) {
@@ -146,7 +202,11 @@ impl IndexManager {
             for seg in segments.iter() {
                 state.waiting_merge.insert(seg.address.clone());
             }
-            println!("Merging {} segments with {} docs.", segments.len(), segments.iter().map(|i|i.doc_count).sum::<u64>());
+            println!(
+                "Merging {} segments with {} docs.",
+                segments.len(),
+                segments.iter().map(|i| i.doc_count).sum::<u64>()
+            );
             let seg_cloned: Vec<SegmentAddress> =
                 segments.iter().map(|info| info.address.clone()).collect();
             self.wait_jobs(10);
@@ -159,13 +219,15 @@ impl IndexManager {
                 let mut local_state = state.write().unwrap();
                 for old_segment in seg_cloned.iter() {
                     //TODO inefficient
-                    if let Some(old_ref) = local_state.active_segments.remove(old_segment){
+                    if let Some(old_ref) = local_state.active_segments.remove(old_segment) {
                         old_ref.delete_on_drop.store(true, atomic::Ordering::SeqCst)
                     }
                     local_state.waiting_merge.remove(old_segment);
                 }
                 let new_info = Arc::new(SegRef::new(new_segment_address.read_info().unwrap()));
-                local_state.active_segments.insert(new_segment_address, new_info);
+                local_state
+                    .active_segments
+                    .insert(new_segment_address, new_info);
             });
         }
     }
@@ -174,6 +236,29 @@ impl IndexManager {
         while self.pool.active_count() + self.pool.queued_count() > num {
             sleep(Duration::from_millis(100));
         }
+    }
+
+    pub fn open_reader(&self) -> ManagedIndexReader {
+        let guard = self.state.read().unwrap();
+        let mut readers = Vec::new();
+        for seg_ref in guard.active_segments.values() {
+            readers.push(SegmentReader::new(seg_ref.info.clone()));
+        }
+        ManagedIndexReader {
+            segment_refs: guard.active_segments.values().cloned().collect(),
+            readers,
+        }
+    }
+}
+
+pub struct ManagedIndexReader {
+    segment_refs: Vec<Arc<SegRef>>,
+    readers: Vec<SegmentReader>,
+}
+
+impl ManagedIndexReader {
+    pub fn segment_readers(&self) -> &[SegmentReader] {
+        &self.readers
     }
 }
 
