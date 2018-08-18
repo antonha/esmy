@@ -1,6 +1,6 @@
 use super::Error;
-use seg::write_seg;
 use doc::Doc;
+use seg::write_seg;
 use seg::Index;
 use seg::{SegmentAddress, SegmentInfo, SegmentReader};
 use std::collections::HashMap;
@@ -71,48 +71,49 @@ impl Drop for SegRef {
     }
 }
 
-struct IndexManagerOptions{
+struct IndexManagerOptions {
     auto_commit: bool,
-    auto_merge: bool
+    auto_merge: bool,
 }
 
-pub struct IndexManagerBuilder{
-    options: IndexManagerOptions
+pub struct IndexManagerBuilder {
+    options: IndexManagerOptions,
 }
 
-impl IndexManagerBuilder{
-    pub fn new() -> IndexManagerBuilder{
-        IndexManagerBuilder{
-            options: IndexManagerOptions{
+impl IndexManagerBuilder {
+    pub fn new() -> IndexManagerBuilder {
+        IndexManagerBuilder {
+            options: IndexManagerOptions {
                 auto_commit: true,
-                auto_merge: true
-            }
+                auto_merge: true,
+            },
         }
     }
 
-    pub fn auto_commit(mut self, val: bool) -> IndexManagerBuilder{
+    pub fn auto_commit(mut self, val: bool) -> IndexManagerBuilder {
         self.options.auto_commit = val;
         self
     }
 
-    pub fn auto_merge(mut self, val: bool) -> IndexManagerBuilder{
+    pub fn auto_merge(mut self, val: bool) -> IndexManagerBuilder {
         self.options.auto_merge = val;
         self
     }
 
-    pub fn open(self, index: Index) -> Result<IndexManager, Error>{
+    pub fn open(self, index: Index) -> Result<IndexManager, Error> {
         IndexManager::open_with_options(index, self.options)
     }
-
 }
 
 impl IndexManager {
-
-    pub fn open(index: Index) -> Result<IndexManager, Error>{
+    pub fn open(index: Index) -> Result<IndexManager, Error> {
         IndexManagerBuilder::new().open(index)
     }
 
-    fn open_with_options(index: Index, options: IndexManagerOptions) -> Result<IndexManager, Error> {
+    fn open_with_options(
+        index: Index,
+        options: IndexManagerOptions,
+    ) -> Result<IndexManager, Error> {
         let mut segments = HashMap::new();
         for segment_address in index.list_segments() {
             segments.insert(
@@ -151,7 +152,7 @@ impl IndexManager {
                         Arc::new(SegRef::new(address.read_info().unwrap())),
                     );
                 });
-                if self.options.auto_merge{
+                if self.options.auto_merge {
                     self.submit_merges(&mut local_state);
                 }
             }
@@ -162,7 +163,7 @@ impl IndexManager {
         {
             self.wait_jobs(0);
             let mut local_state = self.state.write().unwrap();
-            if !local_state.docs_to_index.is_empty(){
+            if !local_state.docs_to_index.is_empty() {
                 let address = self.index.new_address();
                 write_seg(
                     &self.index.schema_template(),
@@ -174,17 +175,16 @@ impl IndexManager {
                     Arc::new(SegRef::new(address.read_info().unwrap())),
                 );
                 local_state.docs_to_index = Vec::new();
-                if self.options.auto_merge{
+                if self.options.auto_merge {
                     self.submit_merges(&mut local_state);
                 }
-
             }
         }
         self.wait_jobs(0);
         Ok(())
     }
 
-    pub fn merge(&self){
+    pub fn merge(&self) {
         self.wait_jobs(0);
         let mut local_state = self.state.write().unwrap();
         self.submit_merges(&mut local_state);

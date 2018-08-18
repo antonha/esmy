@@ -7,22 +7,22 @@ extern crate proptest;
 #[cfg(test)]
 mod tests {
     use esmy::analyzis::NoopAnalyzer;
-    use esmy::search::{search, AllDocsCollector, FullDocQuery, ValueQuery};
-    use esmy::string_index::StringIndex;
+    use esmy::doc::Doc;
+    use esmy::doc::FieldValue;
     use esmy::full_doc::FullDoc;
     use esmy::index_manager::IndexManagerBuilder;
-    use esmy::doc::Doc;
+    use esmy::search::{search, AllDocsCollector, FullDocQuery, ValueQuery};
     use esmy::seg::Feature;
     use esmy::seg::Index;
     use esmy::seg::SegmentSchema;
-    use std::collections::HashMap;
+    use esmy::string_index::StringIndex;
     use proptest::collection::hash_map;
     use proptest::collection::vec;
     use proptest::prelude::*;
+    use std::collections::HashMap;
     use std::env;
     use std::fs;
     use std::path::Path;
-    use esmy::doc::FieldValue;
 
     #[derive(Debug, Clone)]
     enum IndexOperation {

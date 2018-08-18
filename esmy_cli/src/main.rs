@@ -5,18 +5,18 @@ extern crate serde_json;
 extern crate time;
 
 use clap::{App, Arg, SubCommand};
+use esmy::analyzis::Analyzer;
+use esmy::doc::Doc;
 use esmy::index_manager::IndexManagerBuilder;
 use esmy::search;
 use esmy::search::Collector;
-use esmy::analyzis::Analyzer;
-use std::ops::Sub;
-use std::path::PathBuf;
 use esmy::seg;
+use esmy::seg::FeatureMeta;
 use esmy::seg::IndexMeta;
-use esmy::doc::Doc;
 use esmy::seg::SegmentReader;
 use std::collections::HashMap;
-use esmy::seg::FeatureMeta;
+use std::ops::Sub;
+use std::path::PathBuf;
 
 fn main() {
     let matches =
@@ -47,30 +47,33 @@ fn main() {
                     .arg(
                         Arg::with_name("path").short("p").default_value(".").help(
                             "The path to index at. Defaults to the current working directory.",
-                        )
+                        ),
                     ).arg(
                         Arg::with_name("QUERY")
                             .required(true)
                             .index(1)
-                            .help("If the index path should be cleared before indexing..")
+                            .help("If the index path should be cleared before indexing.."),
                     ).arg(
-                    Arg::with_name("analyzer")
-                        .default_value("noop")
-                        .short("a")
-                        .help("Which analyzer to use."))
-        ).subcommand(SubCommand::with_name("read-template").about("foo")
-                            .arg(
-                                Arg::with_name("path").short("p").default_value(".").help(
-                                    "The path to index at. Defaults to the current working directory.",
-                                ))
+                        Arg::with_name("analyzer")
+                            .default_value("noop")
+                            .short("a")
+                            .help("Which analyzer to use."),
+                    ),
             ).subcommand(
-                SubCommand::with_name("write-template")
-                    .arg(
-                        Arg::with_name("path").short("p").default_value(".").help(
-                            "The path to index at. Defaults to the current working directory.",
-                        )
-            ))
-            .get_matches();
+                SubCommand::with_name("read-template").about("foo").arg(
+                    Arg::with_name("path")
+                        .short("p")
+                        .default_value(".")
+                        .help("The path to index at. Defaults to the current working directory."),
+                ),
+            ).subcommand(
+                SubCommand::with_name("write-template").arg(
+                    Arg::with_name("path")
+                        .short("p")
+                        .default_value(".")
+                        .help("The path to index at. Defaults to the current working directory."),
+                ),
+            ).get_matches();
 
     if let Some(matches) = matches.subcommand_matches("index") {
         let index_path = PathBuf::from(matches.value_of("path").unwrap());
@@ -86,7 +89,11 @@ fn main() {
         if !index_path.exists() {
             std::fs::create_dir_all(&index_path).unwrap()
         }
-        let schema = seg::schema_from_metas(seg::read_index_meta(&index_path).unwrap().feature_template_metas);
+        let schema = seg::schema_from_metas(
+            seg::read_index_meta(&index_path)
+                .unwrap()
+                .feature_template_metas,
+        );
         let index = seg::Index::new(schema, index_path);
         let mut index_manager = IndexManagerBuilder::new().open(index).unwrap();
         let start_index = time::now();
@@ -117,16 +124,17 @@ fn main() {
     }
     if let Some(matches) = matches.subcommand_matches("list") {
         let index_path = PathBuf::from(matches.value_of("path").unwrap());
-        let analyzer_string =matches.value_of("analyzer").unwrap();
+        let analyzer_string = matches.value_of("analyzer").unwrap();
         let analyzer = Analyzer::for_name(analyzer_string);
         let query_string = matches.value_of("QUERY").unwrap();
 
-
-        let schema = seg::schema_from_metas(seg::read_index_meta(&index_path).unwrap().feature_template_metas);
+        let schema = seg::schema_from_metas(
+            seg::read_index_meta(&index_path)
+                .unwrap()
+                .feature_template_metas,
+        );
         let index = seg::Index::new(schema, index_path);
-        let index_manager =
-            IndexManagerBuilder::new().open(index)
-                .unwrap();
+        let index_manager = IndexManagerBuilder::new().open(index).unwrap();
         let index_reader = index_manager.open_reader();
         let query = search::TextQuery::new("body", &query_string, analyzer.as_ref());
         let mut collector = PrintAllCollector::new();
@@ -136,14 +144,18 @@ fn main() {
         let index_path = PathBuf::from(matches.value_of("path").unwrap());
         let meta = seg::read_index_meta(&index_path).unwrap();
         serde_json::to_writer(std::io::stdout(), &meta.feature_template_metas).unwrap();
-
     }
     if let Some(matches) = matches.subcommand_matches("write-template") {
         let index_path = PathBuf::from(matches.value_of("path").unwrap());
-        let feature_template_metas : HashMap<String, FeatureMeta> = serde_json::from_reader(std::io::stdin()).unwrap();
-        seg::write_index_meta(&index_path, &IndexMeta{feature_template_metas}).unwrap();
+        let feature_template_metas: HashMap<String, FeatureMeta> =
+            serde_json::from_reader(std::io::stdin()).unwrap();
+        seg::write_index_meta(
+            &index_path,
+            &IndexMeta {
+                feature_template_metas,
+            },
+        ).unwrap();
     }
-
 }
 
 struct PrintAllCollector {}

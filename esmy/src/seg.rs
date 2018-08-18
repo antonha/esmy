@@ -1,19 +1,19 @@
+use analyzis::Analyzer;
+use doc::Doc;
 use error::Error;
+use full_doc::FullDoc;
+use full_doc::FullDocReader;
 use rand::{self, Rng};
 use rmps;
 use std::any::Any;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io;
-use std::path::PathBuf;
 use std::path::Path;
-use walkdir::WalkDir;
+use std::path::PathBuf;
 use string_index::StringIndex;
 use string_index::StringIndexReader;
-use analyzis::Analyzer;
-use doc::Doc;
-use full_doc::FullDoc;
-use full_doc::FullDocReader;
+use walkdir::WalkDir;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(untagged)]
@@ -91,7 +91,7 @@ pub struct SegmentMeta {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct IndexMeta{
+pub struct IndexMeta {
     pub feature_template_metas: HashMap<String, FeatureMeta>,
 }
 
@@ -112,8 +112,8 @@ pub struct FeatureAddress {
     pub name: String,
 }
 
-impl FeatureAddress{
-    pub fn with_ending(&self, ending: &str) -> PathBuf{
+impl FeatureAddress {
+    pub fn with_ending(&self, ending: &str) -> PathBuf {
         let file_name = format!("{}.{}.{}", self.segment.name, self.name, ending);
         self.segment.path.join(file_name).clone()
     }
@@ -155,13 +155,13 @@ pub fn schema_to_feature_metas(schema: &SegmentSchema) -> HashMap<String, Featur
             FeatureMeta {
                 feature_type: feature.feature_type().to_string(),
                 feature_config: feature.to_config(),
-            });
+            },
+        );
     }
     return feature_metas;
 }
 
 impl SegmentAddress {
-
     pub fn read_info(&self) -> Result<SegmentInfo, Error> {
         let seg_file = self.open_file("seg")?;
         let segment_meta: SegmentMeta = rmps::from_read(seg_file)?;
@@ -215,13 +215,12 @@ pub fn read_index_meta(path: &Path) -> Result<IndexMeta, Error> {
     Ok(rmps::from_read(file)?)
 }
 
-pub fn write_index_meta(path: &Path, meta:  &IndexMeta) -> Result<(), Error> {
+pub fn write_index_meta(path: &Path, meta: &IndexMeta) -> Result<(), Error> {
     let mut file = File::create(path.join("index_meta"))?;
     Ok(rmps::encode::write(&mut file, meta)?)
 }
 
 impl Index {
-
     pub fn new(schema_template: SegmentSchema, path: PathBuf) -> Index {
         Index {
             schema_template,
@@ -299,16 +298,35 @@ impl Index {
             name: random_name(),
         };
         for (name, feature) in self.schema_template.features.iter() {
-            let old_addressses: Vec<(FeatureAddress, SegmentInfo)> = infos.iter().map(|i| (FeatureAddress { segment: i.address.clone(), name: name.clone() }, i.clone())).collect();
-            feature.merge_segments(&old_addressses, &FeatureAddress{segment: new_segment_address.clone(), name: name.clone()})?;
+            let old_addressses: Vec<(FeatureAddress, SegmentInfo)> = infos
+                .iter()
+                .map(|i| {
+                    (
+                        FeatureAddress {
+                            segment: i.address.clone(),
+                            name: name.clone(),
+                        },
+                        i.clone(),
+                    )
+                }).collect();
+            feature.merge_segments(
+                &old_addressses,
+                &FeatureAddress {
+                    segment: new_segment_address.clone(),
+                    name: name.clone(),
+                },
+            )?;
         }
         let doc_count: u64 = infos.iter().map(|i| i.doc_count).sum();
         let mut feature_metas = HashMap::new();
         for (name, feature) in &self.schema_template.features {
-            feature_metas.insert( name.clone(), FeatureMeta {
-                feature_type: feature.feature_type().to_string(),
-                feature_config: feature.to_config(),
-            });
+            feature_metas.insert(
+                name.clone(),
+                FeatureMeta {
+                    feature_type: feature.feature_type().to_string(),
+                    feature_config: feature.to_config(),
+                },
+            );
         }
         let segment_meta = SegmentMeta {
             feature_metas,
@@ -342,7 +360,13 @@ pub fn write_seg(
         return Ok(());
     }
     for (name, feature) in &schema.features {
-        feature.write_segment(&FeatureAddress{segment: address.clone(), name: name.clone()}, docs)?;
+        feature.write_segment(
+            &FeatureAddress {
+                segment: address.clone(),
+                name: name.clone(),
+            },
+            docs,
+        )?;
     }
     let feature_metas = schema_to_feature_metas(&schema);
     let segment_meta = SegmentMeta {
@@ -353,7 +377,6 @@ pub fn write_seg(
     rmps::encode::write(&mut file, &segment_meta).unwrap();
     Ok(())
 }
-
 
 pub struct SegmentReader {
     //address: SegmentAddress,
@@ -367,12 +390,15 @@ impl SegmentReader {
                 .schema
                 .features
                 .iter()
-                .map(|(name, feature)|
+                .map(|(name, feature)| {
                     (
                         name.clone(),
-                        feature.reader(&FeatureAddress{segment: info.address.clone(), name: name.clone()})
+                        feature.reader(&FeatureAddress {
+                            segment: info.address.clone(),
+                            name: name.clone(),
+                        }),
                     )
-                ).collect(),
+                }).collect(),
         }
     }
 
@@ -408,5 +434,3 @@ impl SegmentReader {
         return None;
     }
 }
-
-

@@ -17,12 +17,12 @@ extern crate serde_derive;
 extern crate proptest;
 
 pub mod analyzis;
-pub mod error;
 pub mod doc;
-mod util;
+pub mod error;
+pub mod full_doc;
 pub mod index_manager;
 pub mod search;
 pub mod seg;
 pub mod string_index;
-pub mod full_doc;
+mod util;
 pub use error::Error;

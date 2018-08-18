@@ -1,24 +1,24 @@
-use seg::Feature;
-use std::any::Any;
-use seg::FeatureConfig;
-use std::collections::HashMap;
-use seg::FeatureAddress;
-use std::io::BufWriter;
-use std::io::SeekFrom;
-use std::io::Seek;
-use std::io::Write;
 use byteorder::BigEndian;
 use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
 use doc::Doc;
+use error::Error;
+use rmps;
+use seg::Feature;
+use seg::FeatureAddress;
+use seg::FeatureConfig;
 use seg::FeatureReader;
 use seg::SegmentInfo;
 use serde::Serialize;
-use error::Error;
-use std::io::BufReader;
-use std::io;
+use std::any::Any;
+use std::collections::HashMap;
 use std::fs::File;
-use rmps;
+use std::io;
+use std::io::BufReader;
+use std::io::BufWriter;
+use std::io::Seek;
+use std::io::SeekFrom;
+use std::io::Write;
 
 #[derive(Clone)]
 pub struct FullDoc {}
@@ -62,7 +62,9 @@ impl Feature for FullDoc {
     }
 
     fn reader<'b>(&self, address: &FeatureAddress) -> Box<FeatureReader> {
-        Box::new( FullDocReader { address: address.clone() })
+        Box::new(FullDocReader {
+            address: address.clone(),
+        })
     }
 
     fn merge_segments(
@@ -70,11 +72,13 @@ impl Feature for FullDoc {
         old_segments: &[(FeatureAddress, SegmentInfo)],
         new_segment: &FeatureAddress,
     ) -> Result<(), Error> {
-        let mut target_val_offset_file = BufWriter::new(File::create(new_segment.with_ending("fdo"))?);
+        let mut target_val_offset_file =
+            BufWriter::new(File::create(new_segment.with_ending("fdo"))?);
         let mut target_val_file = File::create(new_segment.with_ending("fdv"))?;
         let mut base_offset = 0u64;
-        for (feature_address, _old_info ) in old_segments.iter() {
-            let mut source_val_offset_file = BufReader::new(File::open(feature_address.with_ending("fdo"))?);
+        for (feature_address, _old_info) in old_segments.iter() {
+            let mut source_val_offset_file =
+                BufReader::new(File::open(feature_address.with_ending("fdo"))?);
             loop {
                 match source_val_offset_file.read_u64::<BigEndian>() {
                     Ok(source_offset) => {
@@ -119,5 +123,3 @@ impl FullDocReader {
         Ok(rmps::from_read(values_file).unwrap())
     }
 }
-
-

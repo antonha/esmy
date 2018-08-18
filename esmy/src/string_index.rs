@@ -1,33 +1,32 @@
+use afsort;
 use analyzis::Analyzer;
 use analyzis::NoopAnalyzer;
 use analyzis::UAX29Analyzer;
 use analyzis::WhiteSpaceAnalyzer;
-use fst::map::OpBuilder;
-use fst::{self, Map, MapBuilder, Streamer};
-use error::Error;
-use std::borrow::Cow;
-use seg::FeatureAddress;
-use std::io::BufWriter;
-use seg::Feature;
-use seg::FeatureConfig;
-use std::collections::HashMap;
-use seg::FeatureReader;
-use seg::SegmentInfo;
-use std::io::BufReader;
-use std::io::SeekFrom;
-use std::io::Seek;
-use std::io::Write;
-use std::any::Any;
-use std::fs::File;
-use util::read_vint;
-use util::write_vint;
 use doc::Doc;
 use doc::FieldValue;
-use afsort;
+use error::Error;
+use fst::map::OpBuilder;
+use fst::{self, Map, MapBuilder, Streamer};
+use seg::Feature;
+use seg::FeatureAddress;
+use seg::FeatureConfig;
+use seg::FeatureReader;
+use seg::SegmentInfo;
+use std::any::Any;
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::BufReader;
+use std::io::BufWriter;
+use std::io::Seek;
+use std::io::SeekFrom;
+use std::io::Write;
+use util::read_vint;
+use util::write_vint;
 
 const TERM_ID_LISTING: &'static str = "tid";
 const ID_DOC_LISTING: &'static str = "iddoc";
-
 
 #[derive(Clone)]
 pub struct StringIndex {
@@ -37,8 +36,8 @@ pub struct StringIndex {
 
 impl StringIndex {
     pub fn new<T>(field_name: T, analyzer: Box<Analyzer>) -> StringIndex
-        where
-            T: Into<String>,
+    where
+        T: Into<String>,
     {
         StringIndex {
             field_name: field_name.into(),
@@ -55,9 +54,9 @@ impl StringIndex {
                 for (_name, val) in doc.iter().filter(|e| e.0 == &self.field_name) {
                     match *val {
                         FieldValue::String(ref value) => for token in self.analyzer.analyze(&value)
-                            {
-                                terms.push((token, doc_id as u64))
-                            },
+                        {
+                            terms.push((token, doc_id as u64))
+                        },
                     };
                 }
             }
@@ -179,7 +178,9 @@ impl Feature for StringIndex {
             for (old_address, old_info) in old_segments.iter() {
                 let path = old_address.with_ending(TERM_ID_LISTING);
                 maps.push(unsafe { Map::from_path(path).unwrap() });
-                source_id_doc_files.push(BufReader::new(File::open(old_address.with_ending(&TERM_ID_LISTING))?));
+                source_id_doc_files.push(BufReader::new(File::open(
+                    old_address.with_ending(&TERM_ID_LISTING),
+                )?));
             }
 
             let mut op_builder = OpBuilder::new();
@@ -247,9 +248,8 @@ impl StringIndexReader {
         match maybe_offset {
             None => Ok(None),
             Some(offset) => {
-                let mut iddoc = BufReader::new(
-                    File::open(self.address.with_ending(ID_DOC_LISTING))?
-                );
+                let mut iddoc =
+                    BufReader::new(File::open(self.address.with_ending(ID_DOC_LISTING))?);
                 iddoc.seek(SeekFrom::Start(offset as u64))?;
                 let num = read_vint(&mut iddoc)?;
                 Ok(Some(DocIter {
@@ -278,9 +278,9 @@ impl Iterator for DocIter {
     fn next(&mut self) -> Option<Self::Item> {
         if self.left != 0 {
             self.left -= 1;
-            Some(match read_vint(& mut self.file) {
+            Some(match read_vint(&mut self.file) {
                 Ok(doc) => Ok(doc),
-                Err(e) => Err(Error::from(e))
+                Err(e) => Err(Error::from(e)),
             })
         } else {
             None

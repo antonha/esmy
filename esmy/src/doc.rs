@@ -1,10 +1,10 @@
 use serde::de::{self, Visitor};
-use std::fmt;
-use std::collections::HashMap;
 use serde::Deserialize;
+use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
-use serde::Deserializer;
+use std::collections::HashMap;
+use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FieldValue {
@@ -15,8 +15,8 @@ pub type Doc = HashMap<String, FieldValue>;
 
 impl<'a> Serialize for FieldValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
+    where
+        S: Serializer,
     {
         match *self {
             FieldValue::String(ref value) => serializer.serialize_str(&value),
@@ -26,13 +26,12 @@ impl<'a> Serialize for FieldValue {
 
 impl<'de> Deserialize<'de> for FieldValue {
     fn deserialize<D>(deserializer: D) -> Result<FieldValue, D::Error>
-        where
-            D: Deserializer<'de>,
+    where
+        D: Deserializer<'de>,
     {
         deserializer.deserialize_str(FieldValueVisitor)
     }
 }
-
 
 struct FieldValueVisitor;
 
@@ -44,8 +43,8 @@ impl<'de> Visitor<'de> for FieldValueVisitor {
     }
 
     fn visit_str<E>(self, value: &str) -> Result<FieldValue, E>
-        where
-            E: de::Error,
+    where
+        E: de::Error,
     {
         Ok(FieldValue::String(String::from(value)))
     }

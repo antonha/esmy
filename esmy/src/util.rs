@@ -1,6 +1,6 @@
 use std::io::Error;
-use std::io::Write;
 use std::io::Read;
+use std::io::Write;
 
 pub fn write_vint(write: &mut Write, mut value: u64) -> Result<u32, Error> {
     let mut count = 1;
@@ -31,8 +31,8 @@ mod tests {
 
     use super::read_vint;
     use super::write_vint;
-    use std::io::Cursor;
     use proptest::prelude::*;
+    use std::io::Cursor;
 
     proptest!{
         #[test]
