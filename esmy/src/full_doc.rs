@@ -2,7 +2,7 @@ use seg::Feature;
 use std::any::Any;
 use seg::FeatureConfig;
 use std::collections::HashMap;
-use seg::SegmentAddress;
+use seg::FeatureAddress;
 use std::io::BufWriter;
 use std::io::SeekFrom;
 use std::io::Seek;
@@ -17,6 +17,7 @@ use serde::Serialize;
 use error::Error;
 use std::io::BufReader;
 use std::io;
+use std::fs::File;
 use rmps;
 
 #[derive(Clone)]
@@ -45,10 +46,10 @@ impl Feature for FullDoc {
         FeatureConfig::Map(HashMap::new())
     }
 
-    fn write_segment(&self, address: &SegmentAddress, docs: &[Doc]) -> Result<(), Error> {
+    fn write_segment(&self, address: &FeatureAddress, docs: &[Doc]) -> Result<(), Error> {
         let mut offset: u64;
-        let mut doc_offsets = BufWriter::new(address.create_file("fdo")?);
-        let mut docs_packed = address.create_file("fdv")?;
+        let mut doc_offsets = BufWriter::new(File::create(address.with_ending("fdo"))?);
+        let mut docs_packed = File::create(address.with_ending("fdv"))?;
         for doc in docs {
             offset = docs_packed.seek(SeekFrom::Current(0))?;
             doc_offsets.write_u64::<BigEndian>(offset)?;
@@ -60,20 +61,20 @@ impl Feature for FullDoc {
         Ok(())
     }
 
-    fn reader<'b>(&self, address: SegmentAddress) -> Box<FeatureReader> {
-        Box::new({ FullDocReader { address } })
+    fn reader<'b>(&self, address: &FeatureAddress) -> Box<FeatureReader> {
+        Box::new( FullDocReader { address: address.clone() })
     }
 
     fn merge_segments(
         &self,
-        old_segments: &[SegmentInfo],
-        new_segment: &SegmentAddress,
+        old_segments: &[(FeatureAddress, SegmentInfo)],
+        new_segment: &FeatureAddress,
     ) -> Result<(), Error> {
-        let mut target_val_offset_file = BufWriter::new(new_segment.create_file("fdo")?);
-        let mut target_val_file = new_segment.create_file("fdv")?;
+        let mut target_val_offset_file = BufWriter::new(File::create(new_segment.with_ending("fdo"))?);
+        let mut target_val_file = File::create(new_segment.with_ending("fdv"))?;
         let mut base_offset = 0u64;
-        for segment in old_segments.iter() {
-            let mut source_val_offset_file = BufReader::new(segment.address.open_file("fdo")?);
+        for (feature_address, _old_info ) in old_segments.iter() {
+            let mut source_val_offset_file = BufReader::new(File::open(feature_address.with_ending("fdo"))?);
             loop {
                 match source_val_offset_file.read_u64::<BigEndian>() {
                     Ok(source_offset) => {
@@ -88,7 +89,7 @@ impl Feature for FullDoc {
                     }
                 }
             }
-            let mut source_val_file = segment.address.open_file("fdv")?;
+            let mut source_val_file = File::open(feature_address.with_ending(&"fdv"))?;
             io::copy(&mut source_val_file, &mut target_val_file)?;
             base_offset = target_val_file.seek(SeekFrom::Current(0))?;
         }
@@ -99,7 +100,7 @@ impl Feature for FullDoc {
 }
 
 pub struct FullDocReader {
-    address: SegmentAddress,
+    address: FeatureAddress,
 }
 
 impl FeatureReader for FullDocReader {
@@ -110,8 +111,8 @@ impl FeatureReader for FullDocReader {
 
 impl FullDocReader {
     pub fn read_doc(&self, docid: u64) -> Result<Doc, Error> {
-        let mut offsets_file = self.address.open_file("fdo")?;
-        let mut values_file = self.address.open_file("fdv")?;
+        let mut offsets_file = File::open(self.address.with_ending("fdo"))?;
+        let mut values_file = File::open(self.address.with_ending("fdv"))?;
         offsets_file.seek(SeekFrom::Start(docid * 8))?;
         let offset = offsets_file.read_u64::<BigEndian>()?;
         values_file.seek(SeekFrom::Start(offset))?;

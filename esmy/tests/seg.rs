@@ -11,8 +11,11 @@ mod tests {
     use esmy::string_index::StringIndex;
     use esmy::full_doc::FullDoc;
     use esmy::index_manager::IndexManagerBuilder;
-    use esmy::seg;
     use esmy::doc::Doc;
+    use esmy::seg::Feature;
+    use esmy::seg::Index;
+    use esmy::seg::SegmentSchema;
+    use std::collections::HashMap;
     use proptest::collection::hash_map;
     use proptest::collection::vec;
     use proptest::prelude::*;
@@ -100,12 +103,13 @@ mod tests {
                 fs::remove_dir_all(&index_path).expect("could not delete directory for test");
             }
             fs::create_dir_all(&index_path).expect("could create directory for test");
-            let features : Vec<Box<seg::Feature>> = vec![
-                Box::new(StringIndex::new("field1", Box::from(NoopAnalyzer{}))),
-                Box::new(StringIndex::new("field2", Box::from(NoopAnalyzer{}))),
-                Box::new(FullDoc::new()),
-            ];
-            let index = seg::Index::new(seg::SegmentSchema{features}, index_path);
+            let mut features: HashMap<String, Box<Feature>> =  HashMap::new();
+            features.insert("1".to_string(), Box::new(StringIndex::new("field1", Box::from(NoopAnalyzer{}))));
+            features.insert("2".to_string(), Box::new(StringIndex::new("field2", Box::from(NoopAnalyzer{}))));
+            features.insert("f".to_string(), Box::new(FullDoc::new()));
+
+
+            let index = Index::new(SegmentSchema{features}, index_path);
             let index_manager = IndexManagerBuilder::new().auto_commit(false).auto_merge(false).open(index).expect("Could not open index.");
             let mut in_mem_docs = Vec::new();
             let mut in_mem_seg_docs = Vec::new();

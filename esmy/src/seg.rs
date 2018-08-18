@@ -45,12 +45,12 @@ pub trait Feature: FeatureClone + Sync + Send {
         Self: Sized;
     fn to_config(&self) -> FeatureConfig;
     fn as_any(&self) -> &Any;
-    fn write_segment(&self, address: &SegmentAddress, docs: &[Doc]) -> Result<(), Error>;
-    fn reader<'a>(&self, address: SegmentAddress) -> Box<FeatureReader>;
+    fn write_segment(&self, address: &FeatureAddress, docs: &[Doc]) -> Result<(), Error>;
+    fn reader<'a>(&self, address: &FeatureAddress) -> Box<FeatureReader>;
     fn merge_segments(
         &self,
-        old_segments: &[SegmentInfo],
-        new_segment: &SegmentAddress,
+        old_segments: &[(FeatureAddress, SegmentInfo)],
+        new_segment: &FeatureAddress,
     ) -> Result<(), Error>;
 }
 
@@ -85,19 +85,32 @@ pub struct FeatureMeta {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SegmentMeta {
-    feature_metas: Vec<FeatureMeta>,
+    feature_metas: HashMap<String, FeatureMeta>,
     doc_count: u64,
 }
 
 #[derive(Clone)]
 pub struct SegmentSchema {
-    pub features: Vec<Box<Feature>>,
+    pub features: HashMap<String, Box<Feature>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct SegmentAddress {
     pub path: PathBuf,
     pub name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct FeatureAddress {
+    pub segment: SegmentAddress,
+    pub name: String,
+}
+
+impl FeatureAddress{
+    pub fn with_ending(&self, ending: &str) -> PathBuf{
+        let file_name = format!("{}.{}.{}", self.segment.name, self.name, ending);
+        self.segment.path.join(file_name).clone()
+    }
 }
 
 #[derive(Clone)]
@@ -118,15 +131,15 @@ impl SegmentAddress {
         let seg_file = self.open_file("seg")?;
         let segment_meta: SegmentMeta = rmps::from_read(seg_file)?;
 
-        let mut features = Vec::new();
-        for feature_meta in segment_meta.feature_metas {
+        let mut features = HashMap::new();
+        for (name, feature_meta) in segment_meta.feature_metas {
             let feature: Box<Feature> = match feature_meta.feature_type.as_ref() {
                 "full_doc" => Box::new(FullDoc::from_config(feature_meta.feature_config)),
                 "string_index" => Box::new(StringIndex::from_config(feature_meta.feature_config)),
                 //TODO error handling
                 _ => panic!("No such feature"),
             };
-            features.push(feature);
+            features.insert(name, feature);
         }
 
         return Ok(SegmentInfo {
@@ -224,8 +237,8 @@ impl Index {
             let mut seg_file = address.open_file("seg")?;
             let segment_meta: SegmentMeta = rmps::from_read(seg_file)?;
 
-            let mut features = Vec::new();
-            for feature_meta in segment_meta.feature_metas {
+            let mut features = HashMap::new();
+            for (name, feature_meta) in segment_meta.feature_metas {
                 let feature: Box<Feature> = match feature_meta.feature_type.as_ref() {
                     "full_doc" => Box::new(FullDoc::from_config(feature_meta.feature_config)),
                     "string_index" => {
@@ -234,7 +247,7 @@ impl Index {
                     //TODO error handling
                     _ => panic!("No such feature"),
                 };
-                features.push(feature);
+                features.insert(name, feature);
             }
 
             infos.push(SegmentInfo {
@@ -247,13 +260,14 @@ impl Index {
             path: PathBuf::from(&self.path),
             name: random_name(),
         };
-        for feature in self.schema_template.features.iter() {
-            feature.merge_segments(&infos, &new_segment_address)?;
+        for (name, feature) in self.schema_template.features.iter() {
+            let old_addressses: Vec<(FeatureAddress, SegmentInfo)> = infos.iter().map(|i| (FeatureAddress { segment: i.address.clone(), name: name.clone() }, i.clone())).collect();
+            feature.merge_segments(&old_addressses, &FeatureAddress{segment: new_segment_address.clone(), name: name.clone()})?;
         }
         let doc_count: u64 = infos.iter().map(|i| i.doc_count).sum();
-        let mut feature_metas = Vec::new();
-        for feature in &self.schema_template.features {
-            feature_metas.push(FeatureMeta {
+        let mut feature_metas = HashMap::new();
+        for (name, feature) in &self.schema_template.features {
+            feature_metas.insert( name.clone(), FeatureMeta {
                 feature_type: feature.feature_type().to_string(),
                 feature_config: feature.to_config(),
             });
@@ -292,12 +306,14 @@ pub fn write_seg(
     if docs.is_empty() {
         return Ok(());
     }
-    for feature in &schema.features {
-        feature.write_segment(address, docs)?;
+    for (name, feature) in &schema.features {
+        feature.write_segment(&FeatureAddress{segment: address.clone(), name: name.clone()}, docs)?;
     }
-    let mut feature_metas = Vec::new();
-    for feature in &schema.features {
-        feature_metas.push(FeatureMeta {
+    let mut feature_metas = HashMap::new();
+    for (name, feature) in &schema.features {
+        feature_metas.insert(
+            name.clone(),
+            FeatureMeta {
             feature_type: feature.feature_type().to_string(),
             feature_config: feature.to_config(),
         });
@@ -313,7 +329,7 @@ pub fn write_seg(
 
 pub struct SegmentReader {
     //address: SegmentAddress,
-    readers: Vec<Box<FeatureReader>>,
+    readers: HashMap<String, Box<FeatureReader>>,
 }
 
 impl SegmentReader {
@@ -323,8 +339,12 @@ impl SegmentReader {
                 .schema
                 .features
                 .iter()
-                .map(|feature| feature.reader(info.address.clone()))
-                .collect(),
+                .map(|(name, feature)|
+                    (
+                        name.clone(),
+                        feature.reader(&FeatureAddress{segment: info.address.clone(), name: name.clone()})
+                    )
+                ).collect(),
         }
     }
 
@@ -333,7 +353,7 @@ impl SegmentReader {
         field_name: &str,
         analyzer: &Analyzer,
     ) -> Option<&StringIndexReader> {
-        for reader in self.readers.iter() {
+        for reader in self.readers.values() {
             match reader.as_any().downcast_ref::<StringIndexReader>() {
                 Some(reader) => {
                     if reader.feature.field_name == field_name
@@ -349,7 +369,7 @@ impl SegmentReader {
     }
 
     pub fn full_doc(&self) -> Option<&FullDocReader> {
-        for reader in self.readers.iter() {
+        for reader in self.readers.values() {
             match reader.as_any().downcast_ref::<FullDocReader>() {
                 Some(reader) => {
                     return Some(reader);

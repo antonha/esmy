@@ -6,7 +6,7 @@ use fst::map::OpBuilder;
 use fst::{self, Map, MapBuilder, Streamer};
 use error::Error;
 use std::borrow::Cow;
-use seg::SegmentAddress;
+use seg::FeatureAddress;
 use std::io::BufWriter;
 use seg::Feature;
 use seg::FeatureConfig;
@@ -68,7 +68,7 @@ impl StringIndex {
 
     fn write_term_map(
         &self,
-        address: &SegmentAddress,
+        address: &FeatureAddress,
         terms: Vec<(Cow<str>, u64)>,
     ) -> Result<(), Error> {
         if terms.is_empty() {
@@ -76,12 +76,10 @@ impl StringIndex {
         }
 
         let mut offset: u64 = 0;
-        let tid = address.create_file(&format!("{}.{}", &self.field_name, TERM_ID_LISTING))?;
+        let tid = File::create(address.with_ending(TERM_ID_LISTING))?;
         //TODO: Not unwrap
         let mut tid_builder = MapBuilder::new(BufWriter::new(tid))?;
-        let mut iddoc = BufWriter::new(
-            address.create_file(&format!("{}.{}", self.field_name, ID_DOC_LISTING))?,
-        );
+        let mut iddoc = BufWriter::new(File::create(address.with_ending(ID_DOC_LISTING))?);
         let mut ids = Vec::new();
         let mut last_term = &terms[0].0;
         for &(ref term, id) in terms.iter() {
@@ -144,21 +142,18 @@ impl Feature for StringIndex {
         FeatureConfig::Map(map)
     }
 
-    fn write_segment(&self, address: &SegmentAddress, docs: &[Doc]) -> Result<(), Error> {
+    fn write_segment(&self, address: &FeatureAddress, docs: &[Doc]) -> Result<(), Error> {
         let term_map = self.docs_to_term_map(docs);
         self.write_term_map(address, term_map)
     }
 
-    fn reader(&self, address: SegmentAddress) -> Box<FeatureReader> {
-        let path = address.path.join(format!(
-            "{}.{}.{}",
-            address.name, self.field_name, TERM_ID_LISTING
-        ));
+    fn reader(&self, address: &FeatureAddress) -> Box<FeatureReader> {
+        let path = address.with_ending(TERM_ID_LISTING);
         if path.exists() {
             Box::new({
                 StringIndexReader {
                     feature: self.clone(),
-                    address: address,
+                    address: address.clone(),
                     map: Some(unsafe { Map::from_path(path).unwrap() }),
                 }
             })
@@ -166,7 +161,7 @@ impl Feature for StringIndex {
             Box::new({
                 StringIndexReader {
                     feature: self.clone(),
-                    address,
+                    address: address.clone(),
                     map: None,
                 }
             })
@@ -175,26 +170,16 @@ impl Feature for StringIndex {
 
     fn merge_segments(
         &self,
-        old_segments: &[SegmentInfo],
-        new_segment: &SegmentAddress,
+        old_segments: &[(FeatureAddress, SegmentInfo)],
+        new_segment: &FeatureAddress,
     ) -> Result<(), Error> {
         let mut maps = Vec::with_capacity(old_segments.len());
-        let segments_to_merge = old_segments
-            .iter()
-            .filter(|s| {
-                let path = s.address.path.join(format!(
-                    "{}.{}.{}",
-                    s.address.name, self.field_name, TERM_ID_LISTING
-                ));
-                path.exists()
-            }).collect::<Vec<&SegmentInfo>>();
+        let mut source_id_doc_files = Vec::with_capacity(old_segments.len());
         {
-            for segment in segments_to_merge.iter() {
-                let path = segment.address.path.join(format!(
-                    "{}.{}.{}",
-                    segment.address.name, self.field_name, TERM_ID_LISTING
-                ));
+            for (old_address, old_info) in old_segments.iter() {
+                let path = old_address.with_ending(TERM_ID_LISTING);
                 maps.push(unsafe { Map::from_path(path).unwrap() });
+                source_id_doc_files.push(BufReader::new(File::open(old_address.with_ending(&TERM_ID_LISTING))?));
             }
 
             let mut op_builder = OpBuilder::new();
@@ -202,26 +187,16 @@ impl Feature for StringIndex {
                 op_builder.push(map.stream());
             }
 
-            let mut source_id_doc_files = Vec::with_capacity(old_segments.len());
-            let ending = format!("{}.{}", self.field_name, ID_DOC_LISTING);
-
-            for old_segment in &segments_to_merge {
-                source_id_doc_files.push(BufReader::new(old_segment.address.open_file(&ending)?));
-            }
-
-            let tid =
-                new_segment.create_file(&format!("{}.{}", &self.field_name, TERM_ID_LISTING))?;
-            //TODO: Not unwrap
-            let mut tid_builder = MapBuilder::new(BufWriter::new(tid)).unwrap();
-            let fp = new_segment.create_file(&format!("{}.{}", self.field_name, ID_DOC_LISTING))?;
+            let tid = File::create(new_segment.with_ending(TERM_ID_LISTING))?;
+            let mut tid_builder = MapBuilder::new(BufWriter::new(tid))?;
+            let fp = File::create(new_segment.with_ending(ID_DOC_LISTING))?;
             let mut iddoc = BufWriter::new(fp);
-
             let mut new_offsets = Vec::with_capacity(old_segments.len());
             {
                 let mut new_offset = 0;
-                for segment in old_segments.iter() {
+                for (_old_address, old_info) in old_segments.iter() {
                     new_offsets.push(new_offset);
-                    new_offset += segment.doc_count;
+                    new_offset += old_info.doc_count;
                 }
             }
 
@@ -256,7 +231,7 @@ impl Feature for StringIndex {
 
 pub struct StringIndexReader {
     pub feature: StringIndex,
-    pub address: SegmentAddress,
+    pub address: FeatureAddress,
     pub map: Option<Map>,
 }
 
@@ -273,8 +248,7 @@ impl StringIndexReader {
             None => Ok(None),
             Some(offset) => {
                 let mut iddoc = BufReader::new(
-                    self.address
-                        .open_file(&format!("{}.{}", field, ID_DOC_LISTING))?,
+                    File::open(self.address.with_ending(ID_DOC_LISTING))?
                 );
                 iddoc.seek(SeekFrom::Start(offset as u64))?;
                 let num = read_vint(&mut iddoc)?;

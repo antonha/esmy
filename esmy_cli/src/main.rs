@@ -18,6 +18,7 @@ use esmy::seg::Feature;
 use esmy::seg;
 use esmy::doc::Doc;
 use esmy::seg::SegmentReader;
+use std::collections::HashMap;
 
 fn main() {
     let matches =
@@ -71,10 +72,15 @@ fn main() {
         if !index_path.exists() {
             std::fs::create_dir_all(&index_path).unwrap()
         }
-        let features: Vec<Box<Feature>> = vec![
-            Box::new(StringIndex::new("body", Box::from(WhiteSpaceAnalyzer {}))),
+        let mut features: HashMap<String, Box<Feature>> =  HashMap::new();
+        features.insert(
+            "body_string_index".to_string(),
+            Box::new(StringIndex::new("body", Box::from(WhiteSpaceAnalyzer {})))
+        );
+        features.insert(
+            "full_doc".to_string(),
             Box::new(FullDoc::new()),
-        ];
+        );
         let index = seg::Index::new(seg::SegmentSchema { features }, index_path);
         let mut index_manager = IndexManagerBuilder::new().open(index).unwrap();
         let start_index = time::now();
@@ -107,10 +113,15 @@ fn main() {
         let index_path = PathBuf::from(matches.value_of("path").unwrap());
         let query_string = matches.value_of("QUERY").unwrap();
 
-        let features: Vec<Box<seg::Feature>> = vec![
-            Box::new(StringIndex::new("body", Box::from(UAX29Analyzer {}))),
+        let mut features: HashMap<String, Box<Feature>> =  HashMap::new();
+        features.insert(
+            "body_string_index".to_string(),
+            Box::new(StringIndex::new("body", Box::from(WhiteSpaceAnalyzer {})))
+        );
+        features.insert(
+            "full_doc".to_string(),
             Box::new(FullDoc::new()),
-        ];
+        );
         let index = seg::Index::new(seg::SegmentSchema { features }, index_path);
         let index_manager =
             IndexManagerBuilder::new().open(index)
