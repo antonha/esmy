@@ -7,6 +7,17 @@ pub trait Analyzer: AnalyzerClone + Send + Sync {
     fn analyze<'a>(&self, value: &'a str) -> Box<Iterator<Item = Cow<'a, str>> + 'a>;
 }
 
+impl Analyzer{
+    pub fn for_name(name: &str) -> Box<Analyzer> {
+        match name {
+            "uax29" => Box::new(UAX29Analyzer),
+            "whitespace" => Box::new(WhiteSpaceAnalyzer),
+            "noop" => Box::new(NoopAnalyzer),
+            _ => panic!("No such analyzer"),
+        }
+    }
+}
+
 pub trait AnalyzerClone {
     fn clone_box(&self) -> Box<Analyzer>;
 }

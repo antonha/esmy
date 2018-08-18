@@ -8,6 +8,7 @@ use clap::{App, Arg, SubCommand};
 use esmy::index_manager::IndexManagerBuilder;
 use esmy::search;
 use esmy::search::Collector;
+use esmy::analyzis::Analyzer;
 use std::ops::Sub;
 use std::path::PathBuf;
 use esmy::seg;
@@ -46,13 +47,17 @@ fn main() {
                     .arg(
                         Arg::with_name("path").short("p").default_value(".").help(
                             "The path to index at. Defaults to the current working directory.",
-                        ),
+                        )
                     ).arg(
                         Arg::with_name("QUERY")
                             .required(true)
                             .index(1)
-                            .help("If the index path should be cleared before indexing.."),
-                )
+                            .help("If the index path should be cleared before indexing..")
+                    ).arg(
+                    Arg::with_name("analyzer")
+                        .default_value("noop")
+                        .short("a")
+                        .help("Which analyzer to use."))
         ).subcommand(SubCommand::with_name("read-template").about("foo")
                             .arg(
                                 Arg::with_name("path").short("p").default_value(".").help(
@@ -112,6 +117,8 @@ fn main() {
     }
     if let Some(matches) = matches.subcommand_matches("list") {
         let index_path = PathBuf::from(matches.value_of("path").unwrap());
+        let analyzer_string =matches.value_of("analyzer").unwrap();
+        let analyzer = Analyzer::for_name(analyzer_string);
         let query_string = matches.value_of("QUERY").unwrap();
 
 
@@ -121,8 +128,7 @@ fn main() {
             IndexManagerBuilder::new().open(index)
                 .unwrap();
         let index_reader = index_manager.open_reader();
-        let analyzer = esmy::analyzis::UAX29Analyzer {};
-        let query = search::TextQuery::new("body", &query_string, &analyzer);
+        let query = search::TextQuery::new("body", &query_string, analyzer.as_ref());
         let mut collector = PrintAllCollector::new();
         search::search(&index_reader, &query, &mut collector).unwrap();
     }
