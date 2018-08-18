@@ -5,20 +5,17 @@ extern crate serde_json;
 extern crate time;
 
 use clap::{App, Arg, SubCommand};
-use esmy::analyzis::UAX29Analyzer;
-use esmy::analyzis::WhiteSpaceAnalyzer;
 use esmy::index_manager::IndexManagerBuilder;
 use esmy::search;
 use esmy::search::Collector;
 use std::ops::Sub;
 use std::path::PathBuf;
-use esmy::full_doc::FullDoc;
-use esmy::string_index::StringIndex;
-use esmy::seg::Feature;
 use esmy::seg;
+use esmy::seg::IndexMeta;
 use esmy::doc::Doc;
 use esmy::seg::SegmentReader;
 use std::collections::HashMap;
+use esmy::seg::FeatureMeta;
 
 fn main() {
     let matches =
@@ -55,8 +52,20 @@ fn main() {
                             .required(true)
                             .index(1)
                             .help("If the index path should be cleared before indexing.."),
-                    ),
-            ).get_matches();
+                )
+        ).subcommand(SubCommand::with_name("read-template").about("foo")
+                            .arg(
+                                Arg::with_name("path").short("p").default_value(".").help(
+                                    "The path to index at. Defaults to the current working directory.",
+                                ))
+            ).subcommand(
+                SubCommand::with_name("write-template")
+                    .arg(
+                        Arg::with_name("path").short("p").default_value(".").help(
+                            "The path to index at. Defaults to the current working directory.",
+                        )
+            ))
+            .get_matches();
 
     if let Some(matches) = matches.subcommand_matches("index") {
         let index_path = PathBuf::from(matches.value_of("path").unwrap());
@@ -72,16 +81,8 @@ fn main() {
         if !index_path.exists() {
             std::fs::create_dir_all(&index_path).unwrap()
         }
-        let mut features: HashMap<String, Box<Feature>> =  HashMap::new();
-        features.insert(
-            "body_string_index".to_string(),
-            Box::new(StringIndex::new("body", Box::from(WhiteSpaceAnalyzer {})))
-        );
-        features.insert(
-            "full_doc".to_string(),
-            Box::new(FullDoc::new()),
-        );
-        let index = seg::Index::new(seg::SegmentSchema { features }, index_path);
+        let schema = seg::schema_from_metas(seg::read_index_meta(&index_path).unwrap().feature_template_metas);
+        let index = seg::Index::new(schema, index_path);
         let mut index_manager = IndexManagerBuilder::new().open(index).unwrap();
         let start_index = time::now();
         let stream =
@@ -113,16 +114,9 @@ fn main() {
         let index_path = PathBuf::from(matches.value_of("path").unwrap());
         let query_string = matches.value_of("QUERY").unwrap();
 
-        let mut features: HashMap<String, Box<Feature>> =  HashMap::new();
-        features.insert(
-            "body_string_index".to_string(),
-            Box::new(StringIndex::new("body", Box::from(WhiteSpaceAnalyzer {})))
-        );
-        features.insert(
-            "full_doc".to_string(),
-            Box::new(FullDoc::new()),
-        );
-        let index = seg::Index::new(seg::SegmentSchema { features }, index_path);
+
+        let schema = seg::schema_from_metas(seg::read_index_meta(&index_path).unwrap().feature_template_metas);
+        let index = seg::Index::new(schema, index_path);
         let index_manager =
             IndexManagerBuilder::new().open(index)
                 .unwrap();
@@ -132,6 +126,18 @@ fn main() {
         let mut collector = PrintAllCollector::new();
         search::search(&index_reader, &query, &mut collector).unwrap();
     }
+    if let Some(matches) = matches.subcommand_matches("read-template") {
+        let index_path = PathBuf::from(matches.value_of("path").unwrap());
+        let meta = seg::read_index_meta(&index_path).unwrap();
+        serde_json::to_writer(std::io::stdout(), &meta.feature_template_metas).unwrap();
+
+    }
+    if let Some(matches) = matches.subcommand_matches("write-template") {
+        let index_path = PathBuf::from(matches.value_of("path").unwrap());
+        let feature_template_metas : HashMap<String, FeatureMeta> = serde_json::from_reader(std::io::stdin()).unwrap();
+        seg::write_index_meta(&index_path, &IndexMeta{feature_template_metas}).unwrap();
+    }
+
 }
 
 struct PrintAllCollector {}

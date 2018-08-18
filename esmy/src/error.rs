@@ -40,3 +40,9 @@ impl From<rmps::decode::Error> for Error {
         return Error::IOError;
     }
 }
+
+impl From<rmps::encode::Error> for Error {
+    fn from(_e: rmps::encode::Error) -> Self {
+        return Error::IOError;
+    }
+}
