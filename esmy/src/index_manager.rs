@@ -91,12 +91,12 @@ impl IndexManagerBuilder{
     }
 
     pub fn auto_commit(mut self, val: bool) -> IndexManagerBuilder{
-        self.options.auto_commit = true;
+        self.options.auto_commit = val;
         self
     }
 
     pub fn auto_merge(mut self, val: bool) -> IndexManagerBuilder{
-        self.options.auto_commit = true;
+        self.options.auto_merge = val;
         self
     }
 
@@ -133,7 +133,7 @@ impl IndexManager {
     }
 
     pub fn add_doc(&self, doc: Doc) {
-        self.wait_jobs(5);
+        self.wait_jobs(50);
         //TODO long-term goal here is to add to some transaction log instead of just adding to in-memory
         {
             let mut local_state = self.state.write().unwrap();
@@ -209,7 +209,6 @@ impl IndexManager {
             );
             let seg_cloned: Vec<SegmentAddress> =
                 segments.iter().map(|info| info.address.clone()).collect();
-            self.wait_jobs(10);
             let state = self.state.clone();
             let index = self.index.clone();
             self.pool.execute(move || {

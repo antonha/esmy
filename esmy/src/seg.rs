@@ -497,7 +497,7 @@ impl Feature for StringIndex {
     }
 
     fn from_config(config: FeatureConfig) -> Self {
-        let field_name = config.str_at("name").unwrap().to_string();
+        let field_name = config.str_at("field").unwrap().to_string();
         let analyzer_name = config.str_at("analyzer").unwrap();
         let analyzer: Box<Analyzer> = match analyzer_name {
             "uax29" => Box::new(UAX29Analyzer),
@@ -514,7 +514,7 @@ impl Feature for StringIndex {
     fn to_config(&self) -> FeatureConfig {
         let mut map = HashMap::new();
         map.insert(
-            "name".to_string(),
+            "field".to_string(),
             FeatureConfig::String(self.field_name.to_string()),
         );
         map.insert(
