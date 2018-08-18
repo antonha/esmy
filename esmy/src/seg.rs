@@ -316,9 +316,6 @@ impl Index {
         };
         let mut file = new_segment_address.create_file("seg")?;
         rmps::encode::write(&mut file, &segment_meta)?;
-        for address in addresses {
-            address.remove_file("seg")?;
-        }
         Ok(new_segment_address)
     }
 }
@@ -411,7 +408,5 @@ impl SegmentReader {
         return None;
     }
 }
-
-
 
 
