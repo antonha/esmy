@@ -6,12 +6,18 @@ extern crate time;
 
 use clap::{App, Arg, SubCommand};
 use esmy::analyzis::UAX29Analyzer;
-use esmy::index_manager::IndexManager;
+use esmy::analyzis::WhiteSpaceAnalyzer;
+use esmy::index_manager::IndexManagerBuilder;
 use esmy::search;
 use esmy::search::Collector;
-use esmy::seg::{self, Doc, FullDoc, SegmentReader, StringIndex};
 use std::ops::Sub;
 use std::path::PathBuf;
+use esmy::full_doc::FullDoc;
+use esmy::string_index::StringIndex;
+use esmy::seg::Feature;
+use esmy::seg;
+use esmy::doc::Doc;
+use esmy::seg::SegmentReader;
 
 fn main() {
     let matches =
@@ -65,12 +71,12 @@ fn main() {
         if !index_path.exists() {
             std::fs::create_dir_all(&index_path).unwrap()
         }
-        let features: Vec<Box<seg::Feature>> = vec![
-            Box::new(StringIndex::new("body", Box::from(UAX29Analyzer {}))),
+        let features: Vec<Box<Feature>> = vec![
+            Box::new(StringIndex::new("body", Box::from(WhiteSpaceAnalyzer {}))),
             Box::new(FullDoc::new()),
         ];
         let index = seg::Index::new(seg::SegmentSchema { features }, index_path);
-        let mut index_manager = IndexManager::open(index).unwrap();
+        let mut index_manager = IndexManagerBuilder::new().open(index).unwrap();
         let start_index = time::now();
         let stream =
             serde_json::Deserializer::from_reader(std::io::BufReader::new(std::io::stdin()))
@@ -105,8 +111,9 @@ fn main() {
             Box::new(StringIndex::new("body", Box::from(UAX29Analyzer {}))),
             Box::new(FullDoc::new()),
         ];
+        let index = seg::Index::new(seg::SegmentSchema { features }, index_path);
         let index_manager =
-            IndexManager::open(seg::Index::new(seg::SegmentSchema { features }, index_path))
+            IndexManagerBuilder::new().open(index)
                 .unwrap();
         let index_reader = index_manager.open_reader();
         let analyzer = esmy::analyzis::UAX29Analyzer {};

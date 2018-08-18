@@ -1,6 +1,6 @@
 use super::Error;
 use seg::write_seg;
-use seg::Doc;
+use doc::Doc;
 use seg::Index;
 use seg::{SegmentAddress, SegmentInfo, SegmentReader};
 use std::collections::HashMap;
@@ -244,14 +244,14 @@ impl IndexManager {
             readers.push(SegmentReader::new(seg_ref.info.clone()));
         }
         ManagedIndexReader {
-            segment_refs: guard.active_segments.values().cloned().collect(),
+            _segment_refs: guard.active_segments.values().cloned().collect(),
             readers,
         }
     }
 }
 
 pub struct ManagedIndexReader {
-    segment_refs: Vec<Arc<SegRef>>,
+    _segment_refs: Vec<Arc<SegRef>>,
     readers: Vec<SegmentReader>,
 }
 

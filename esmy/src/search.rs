@@ -2,8 +2,10 @@ use super::Error;
 use analyzis::Analyzer;
 use analyzis::NoopAnalyzer;
 use index_manager::ManagedIndexReader;
-use seg::{Doc, FieldValue, SegmentReader};
+use seg::SegmentReader;
+use doc::Doc;
 use std::borrow::Cow;
+use doc::FieldValue;
 
 pub fn search(
     index_reader: &ManagedIndexReader,
