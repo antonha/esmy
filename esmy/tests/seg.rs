@@ -102,9 +102,9 @@ mod tests {
                 fs::remove_dir_all(&index_path).expect("could not delete directory for test");
             }
             fs::create_dir_all(&index_path).expect("could create directory for test");
-            let mut features: HashMap<String, Box<Feature>> =  HashMap::new();
-            features.insert("1".to_string(), Box::new(StringIndex::new("field1", Box::from(NoopAnalyzer{}))));
-            features.insert("2".to_string(), Box::new(StringIndex::new("field2", Box::from(NoopAnalyzer{}))));
+            let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
+            features.insert("1".to_string(), Box::new(StringIndex::new("field1".to_string(), Box::from(NoopAnalyzer{}))));
+            features.insert("2".to_string(), Box::new(StringIndex::new("field2".to_string(), Box::from(NoopAnalyzer{}))));
             features.insert("f".to_string(), Box::new(FullDoc::new()));
             let schema = SegmentSchema {features};
 
@@ -115,7 +115,7 @@ mod tests {
                 match op {
                     &IndexOperation::Index(ref docs) => {
                         for doc in docs{
-                            index_manager.add_doc(doc.clone());
+                            index_manager.add_doc(doc.clone()).unwrap();
                             in_mem_seg_docs.push(doc.clone());
                         }
                     },
@@ -125,7 +125,7 @@ mod tests {
                         in_mem_seg_docs = Vec::new()
                     },
                     &IndexOperation::Merge => {
-                        index_manager.merge();
+                        index_manager.merge().expect("Could not merge segments.");
                     }
                 }
                 for query in queries {

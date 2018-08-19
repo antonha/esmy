@@ -15,7 +15,7 @@ pub fn search(
     for segment_reader in index_reader.segment_readers() {
         match query.segment_matches(&segment_reader)? {
             Some(disi) => for doc in disi {
-                collector.collect(segment_reader, doc?);
+                collector.collect(segment_reader, doc?)?;
             },
             None => (),
         };
@@ -100,7 +100,7 @@ impl<'a> SegmentQuery for TextQuery<'a> {
 }
 
 pub trait Collector {
-    fn collect(&mut self, reader: &SegmentReader, doc_id: u64);
+    fn collect(&mut self, reader: &SegmentReader, doc_id: u64) -> Result<(), Error>;
 }
 
 pub struct CountCollector {
@@ -118,8 +118,9 @@ impl CountCollector {
 }
 
 impl Collector for CountCollector {
-    fn collect(&mut self, _reader: &SegmentReader, _doc_id: u64) {
+    fn collect(&mut self, _reader: &SegmentReader, _doc_id: u64) -> Result<(), Error> {
         self.count += 1;
+        Ok(())
     }
 }
 
@@ -138,8 +139,9 @@ impl AllDocsCollector {
 }
 
 impl Collector for AllDocsCollector {
-    fn collect(&mut self, reader: &SegmentReader, doc_id: u64) {
-        let doc = reader.full_doc().unwrap().read_doc(doc_id).unwrap();
+    fn collect(&mut self, reader: &SegmentReader, doc_id: u64) -> Result<(), Error> {
+        let doc = reader.full_doc().unwrap().read_doc(doc_id)?;
         self.docs.push(doc);
+        Ok(())
     }
 }

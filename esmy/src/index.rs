@@ -2,6 +2,8 @@ use super::Error;
 use doc::Doc;
 use rand;
 use rand::Rng;
+use rayon;
+use rayon::prelude::*;
 use rmps;
 use seg;
 use seg::write_seg;
@@ -19,9 +21,6 @@ use std::sync::atomic;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::sync::RwLock;
-use std::thread::sleep;
-use std::time::Duration;
-use threadpool::ThreadPool;
 use walkdir::WalkDir;
 
 pub struct Index {
@@ -29,7 +28,8 @@ pub struct Index {
     schema_template: SegmentSchema,
     path: PathBuf,
     state: Arc<RwLock<IndexState>>,
-    pool: ThreadPool,
+    //pool: ThreadPool,
+    rayon_pool: rayon::ThreadPool,
 }
 
 struct IndexState {
@@ -157,7 +157,9 @@ impl Index {
                 active_segments: segments,
                 waiting_merge: HashSet::new(),
             })),
-            pool: ThreadPool::new(4),
+            rayon_pool: rayon::ThreadPoolBuilder::new()
+                .thread_name(|i| format!("esmy-indexing-{}", i))
+                .build()?,
         })
     }
 
@@ -181,63 +183,44 @@ impl Index {
                 active_segments: HashMap::new(),
                 waiting_merge: HashSet::new(),
             })),
-            pool: ThreadPool::new(4),
+            rayon_pool: rayon::ThreadPoolBuilder::new()
+                .thread_name(|i| format!("esmy-indexing-{}", i))
+                .build()?,
         })
     }
 
-    pub fn add_doc(&self, doc: Doc) {
-        self.wait_jobs(50);
+    pub fn add_doc(&self, doc: Doc) -> Result<(), Error> {
         //TODO long-term goal here is to add to some transaction log instead of just adding to in-memory
         {
             let mut local_state = self.state.write().unwrap();
             local_state.docs_to_index.push(doc);
-            if self.options.auto_commit && local_state.docs_to_index.len() > 10000 {
-                let to_commit = mem::replace(&mut local_state.docs_to_index, Vec::new());
-                let schema = self.schema_template.clone();
-                let address = self.new_segment_address();
-                let state = self.state.clone();
-                self.pool.execute(move || {
-                    write_seg(&schema, &address, &to_commit).unwrap();
-                    let mut local_state = state.write().unwrap();
-                    local_state.active_segments.insert(
-                        address.clone(),
-                        Arc::new(SegRef::new(address.read_info().unwrap())),
-                    );
-                });
-                if self.options.auto_merge {
-                    self.submit_merges(&mut local_state);
-                }
+            if self.options.auto_commit && local_state.docs_to_index.len() > 1000 {
+                drop(local_state);
+                self.commit()?;
             }
+            Ok(())
         }
     }
 
     pub fn commit(&self) -> Result<(), Error> {
-        {
-            self.wait_jobs(0);
-            let mut local_state = self.state.write().unwrap();
-            if !local_state.docs_to_index.is_empty() {
-                let address = self.new_segment_address();
-                write_seg(&self.schema_template, &address, &local_state.docs_to_index)?;
-                local_state.active_segments.insert(
+        println!("Commiting docs");
+        if !self.state.read().unwrap().docs_to_index.is_empty() {
+            self.rayon_pool.install(move || -> Result<(), Error> {
+                let address = new_segment_address(&self.path);
+                let to_commit =
+                    mem::replace(&mut self.state.write().unwrap().docs_to_index, Vec::new());
+                write_seg(&self.schema_template, &address, &to_commit)?;
+                self.state.write().unwrap().active_segments.insert(
                     address.clone(),
                     Arc::new(SegRef::new(address.read_info().unwrap())),
                 );
-                local_state.docs_to_index = Vec::new();
-                if self.options.auto_merge {
-                    self.submit_merges(&mut local_state);
-                }
+                Ok(())
+            })?;
+            if self.options.auto_merge {
+                self.submit_merges()?;
             }
         }
-        self.wait_jobs(0);
         Ok(())
-    }
-
-    fn new_segment_address(&self) -> SegmentAddress {
-        let name: String = rand::thread_rng().gen_ascii_chars().take(10).collect();
-        SegmentAddress {
-            path: PathBuf::from(&self.path),
-            name,
-        }
     }
 
     fn list_segments(path: &PathBuf) -> Vec<SegmentAddress> {
@@ -267,39 +250,44 @@ impl Index {
             }).collect::<Vec<SegmentAddress>>()
     }
 
-    pub fn merge(&self) {
-        self.wait_jobs(0);
-        let mut local_state = self.state.write().unwrap();
-        self.submit_merges(&mut local_state);
-        self.wait_jobs(0)
+    pub fn merge(&self) -> Result<(), Error> {
+        self.rayon_pool.install(|| -> Result<(), Error>{
+            self.submit_merges()?;
+            Ok(())
+        })
     }
 
-    fn submit_merges(&self, state: &mut IndexState) {
-        let infos: Vec<&SegmentInfo> = state
-            .active_segments
-            .values()
-            .filter(|info| !state.waiting_merge.contains(&info.info.address))
-            .map(|item| &item.info)
-            .collect();
-        for segments in find_merges(infos).to_merge {
-            for seg in segments.iter() {
-                state.waiting_merge.insert(seg.address.clone());
-            }
-            println!(
-                "Merging {} segments with {} docs.",
-                segments.len(),
-                segments.iter().map(|i| i.doc_count).sum::<u64>()
-            );
-            let seg_cloned: Vec<SegmentAddress> =
-                segments.iter().map(|info| info.address.clone()).collect();
-            let state = self.state.clone();
-            let schema = self.schema_template.clone();
-            let new_address = self.new_segment_address();
-            self.pool.execute(move || {
+    fn submit_merges(&self) -> Result<(), Error> {
+        let infos : Vec<SegmentInfo> = {
+            let local_state = &self.state.write().unwrap();
+            local_state
+                .active_segments
+                .values()
+                .filter(|info| !local_state.waiting_merge.contains(&info.info.address))
+                .map(|item| item.info.clone())
+                .collect()
+        };
+        find_merges(infos).to_merge.par_iter().try_for_each(
+            move |segments| -> Result<(), Error> {
+                let new_address = new_segment_address(&self.path);
+                {
+                    //TODO error handling
+                    let mut local_state = self.state.write().unwrap();
+                    for seg in segments.iter() {
+                        local_state.waiting_merge.insert(seg.address.clone());
+                    }
+                }
+                println!(
+                    "Merging {} segments with {} docs.",
+                    segments.len(),
+                    segments.iter().map(|i| i.doc_count).sum::<u64>()
+                );
+                let seg_cloned: Vec<SegmentAddress> =
+                    segments.iter().map(|info| info.address.clone()).collect();
                 let addresses_to_merge: Vec<&SegmentAddress> =
                     seg_cloned.iter().map(|address| address).collect();
-                seg::merge(&schema, &new_address, &addresses_to_merge).unwrap();
-                let mut local_state = state.write().unwrap();
+                seg::merge(&self.schema_template, &new_address, &addresses_to_merge)?;
+                let mut local_state = self.state.write().unwrap();
                 for old_segment in seg_cloned.iter() {
                     //TODO inefficient iteration
                     if let Some(old_ref) = local_state.active_segments.remove(old_segment) {
@@ -309,14 +297,10 @@ impl Index {
                 }
                 let new_info = Arc::new(SegRef::new(new_address.read_info().unwrap()));
                 local_state.active_segments.insert(new_address, new_info);
-            });
-        }
-    }
-
-    pub fn wait_jobs(&self, num: usize) {
-        while self.pool.active_count() + self.pool.queued_count() > num {
-            sleep(Duration::from_millis(100));
-        }
+                Ok(())
+            },
+        )?;
+        Ok(())
     }
 
     pub fn open_reader(&self) -> ManagedIndexReader {
@@ -332,6 +316,14 @@ impl Index {
     }
 }
 
+fn new_segment_address(path: &Path) -> SegmentAddress {
+    let name: String = rand::thread_rng().gen_ascii_chars().take(10).collect();
+    SegmentAddress {
+        path: PathBuf::from(path),
+        name,
+    }
+}
+
 pub struct ManagedIndexReader {
     _segment_refs: Vec<Arc<SegRef>>,
     readers: Vec<SegmentReader>,
@@ -343,14 +335,14 @@ impl ManagedIndexReader {
     }
 }
 
-struct MergeSpec<'a> {
-    to_merge: Vec<Vec<&'a SegmentInfo>>,
+struct MergeSpec {
+    to_merge: Vec<Vec<SegmentInfo>>,
 }
 
-fn find_merges(mut segments_in: Vec<&SegmentInfo>) -> MergeSpec {
+fn find_merges(mut segments_in: Vec<SegmentInfo>) -> MergeSpec {
     segments_in.sort_by(|a, b| a.doc_count.cmp(&b.doc_count).reverse());
     let mut queue = ::std::collections::VecDeque::from(segments_in);
-    let mut to_merge: Vec<Vec<&SegmentInfo>> = Vec::new();
+    let mut to_merge: Vec<Vec<SegmentInfo>> = Vec::new();
     while let Some(first) = queue.pop_front() {
         let mut stage = Vec::new();
         loop {

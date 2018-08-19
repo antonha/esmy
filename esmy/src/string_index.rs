@@ -35,7 +35,7 @@ pub struct StringIndex {
 }
 
 impl StringIndex {
-    pub fn new<T>(field_name: String, analyzer: Box<Analyzer>) -> StringIndex {
+    pub fn new(field_name: String, analyzer: Box<Analyzer>) -> StringIndex {
         StringIndex {
             field_name,
             analyzer,
@@ -169,6 +169,7 @@ impl Feature for StringIndex {
         old_segments: &[(FeatureAddress, SegmentInfo)],
         new_segment: &FeatureAddress,
     ) -> Result<(), Error> {
+        println!("Foobar");
         let mut maps = Vec::with_capacity(old_segments.len());
         let mut source_id_doc_files = Vec::with_capacity(old_segments.len());
         {
@@ -198,6 +199,8 @@ impl Feature for StringIndex {
                 }
             }
 
+            println!("Foobar pre-union");
+
             let mut union = op_builder.union();
             let mut offset = 0u64;
             while let Some((term, term_offsets)) = union.next() {
@@ -213,8 +216,10 @@ impl Feature for StringIndex {
 
                 for term_offset in term_offsets.iter() {
                     let source_id_doc_file = &mut source_id_doc_files[term_offset.index];
-                    for _ in 0..term_doc_counts[term_offset.index] {
+                    for i in 0..term_doc_counts[term_offset.index] {
+                        println!("Foobar2 pre-read {}", i);
                         let doc_id = read_vint(source_id_doc_file)?;
+                        println!("Foobar2 post-read");
                         offset +=
                             write_vint(&mut iddoc, new_offsets[term_offset.index] + doc_id)? as u64;
                     }
@@ -222,6 +227,7 @@ impl Feature for StringIndex {
             }
             tid_builder.finish()?;
             iddoc.flush()?;
+            println!("Foobar done");
         }
         Ok(())
     }
@@ -286,7 +292,7 @@ impl Iterator for DocIter {
 }
 
 impl From<fst::Error> for Error {
-    fn from(_e: fst::Error) -> Self {
-        return Error::IOError;
+    fn from(e: fst::Error) -> Self {
+        return Error::Other(Box::new(e));
     }
 }

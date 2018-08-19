@@ -87,7 +87,7 @@ impl Feature for FullDoc {
                     }
                     Err(error) => {
                         if error.kind() != io::ErrorKind::UnexpectedEof {
-                            return Err(Error::IOError);
+                            return Err(Error::IOError(error));
                         }
                         break;
                     }

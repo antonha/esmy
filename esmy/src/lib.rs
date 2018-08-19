@@ -6,6 +6,7 @@ extern crate threadpool;
 extern crate unicode_segmentation;
 extern crate walkdir;
 
+extern crate rayon;
 extern crate rmp_serde as rmps;
 extern crate serde;
 
