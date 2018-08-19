@@ -15,6 +15,7 @@ use string_index::StringIndexReader;
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum FeatureConfig {
+    None,
     Bool(bool),
     Int(i64),
     Float(f64),
@@ -32,6 +33,13 @@ impl FeatureConfig {
             }
         }
         return None;
+    }
+
+    fn is_none(&self) -> bool {
+        match &self {
+            FeatureConfig::None => true,
+            _ => false,
+        }
     }
 }
 
@@ -77,8 +85,17 @@ impl Clone for Box<Feature> {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FeatureMeta {
-    feature_type: String,
-    feature_config: FeatureConfig,
+    #[serde(rename = "type")]
+    ftype: String,
+    #[serde(
+        default = "no_config",
+        skip_serializing_if = "FeatureConfig::is_none"
+    )]
+    config: FeatureConfig,
+}
+
+fn no_config() -> FeatureConfig {
+    FeatureConfig::None
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -121,9 +138,9 @@ pub struct SegmentInfo {
 pub fn schema_from_metas(feature_metas: HashMap<String, FeatureMeta>) -> SegmentSchema {
     let mut features = HashMap::new();
     for (name, feature_meta) in feature_metas {
-        let feature: Box<Feature> = match feature_meta.feature_type.as_ref() {
-            "full_doc" => Box::new(FullDoc::from_config(feature_meta.feature_config)),
-            "string_index" => Box::new(StringIndex::from_config(feature_meta.feature_config)),
+        let feature: Box<Feature> = match feature_meta.ftype.as_ref() {
+            "full_doc" => Box::new(FullDoc::from_config(feature_meta.config)),
+            "string_index" => Box::new(StringIndex::from_config(feature_meta.config)),
             //TODO error handling
             _ => panic!("No such feature"),
         };
@@ -139,8 +156,8 @@ pub fn schema_to_feature_metas(schema: &SegmentSchema) -> HashMap<String, Featur
         feature_metas.insert(
             name.clone(),
             FeatureMeta {
-                feature_type: feature.feature_type().to_string(),
-                feature_config: feature.to_config(),
+                ftype: feature.feature_type().to_string(),
+                config: feature.to_config(),
             },
         );
     }
@@ -235,9 +252,9 @@ pub fn merge(
 
         let mut features = HashMap::new();
         for (name, feature_meta) in segment_meta.feature_metas {
-            let feature: Box<Feature> = match feature_meta.feature_type.as_ref() {
-                "full_doc" => Box::new(FullDoc::from_config(feature_meta.feature_config)),
-                "string_index" => Box::new(StringIndex::from_config(feature_meta.feature_config)),
+            let feature: Box<Feature> = match feature_meta.ftype.as_ref() {
+                "full_doc" => Box::new(FullDoc::from_config(feature_meta.config)),
+                "string_index" => Box::new(StringIndex::from_config(feature_meta.config)),
                 //TODO error handling
                 _ => panic!("No such feature"),
             };
@@ -276,8 +293,8 @@ pub fn merge(
         feature_metas.insert(
             name.clone(),
             FeatureMeta {
-                feature_type: feature.feature_type().to_string(),
-                feature_config: feature.to_config(),
+                ftype: feature.feature_type().to_string(),
+                config: feature.to_config(),
             },
         );
     }
