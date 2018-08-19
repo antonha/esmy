@@ -10,10 +10,9 @@ mod tests {
     use esmy::doc::Doc;
     use esmy::doc::FieldValue;
     use esmy::full_doc::FullDoc;
-    use esmy::index_manager::IndexManagerBuilder;
+    use esmy::index::IndexBuilder;
     use esmy::search::{search, AllDocsCollector, FullDocQuery, ValueQuery};
     use esmy::seg::Feature;
-    use esmy::seg::Index;
     use esmy::seg::SegmentSchema;
     use esmy::string_index::StringIndex;
     use proptest::collection::hash_map;
@@ -107,10 +106,9 @@ mod tests {
             features.insert("1".to_string(), Box::new(StringIndex::new("field1", Box::from(NoopAnalyzer{}))));
             features.insert("2".to_string(), Box::new(StringIndex::new("field2", Box::from(NoopAnalyzer{}))));
             features.insert("f".to_string(), Box::new(FullDoc::new()));
+            let schema = SegmentSchema {features};
 
-
-            let index = Index::new(SegmentSchema{features}, index_path);
-            let index_manager = IndexManagerBuilder::new().auto_commit(false).auto_merge(false).open(index).expect("Could not open index.");
+            let index_manager = IndexBuilder::new().auto_commit(false).auto_merge(false).create(index_path, schema).expect("Could not open index.");
             let mut in_mem_docs = Vec::new();
             let mut in_mem_seg_docs = Vec::new();
             for op in ops {

@@ -3,7 +3,7 @@ use analyzis::Analyzer;
 use analyzis::NoopAnalyzer;
 use doc::Doc;
 use doc::FieldValue;
-use index_manager::ManagedIndexReader;
+use index::ManagedIndexReader;
 use seg::SegmentReader;
 use std::borrow::Cow;
 
@@ -52,7 +52,7 @@ impl<'a> SegmentQuery for ValueQuery {
         reader: &SegmentReader,
     ) -> Result<Option<Box<Iterator<Item = Result<u64, Error>>>>, Error> {
         match reader.string_index(&self.field, &NoopAnalyzer) {
-            Some(index) => match index.doc_iter(&self.field, &self.value)? {
+            Some(index) => match index.doc_iter(&self.value)? {
                 Some(iter) => Ok(Some(Box::from(iter))),
                 None => Ok(None),
             },
@@ -92,7 +92,7 @@ impl<'a> SegmentQuery for TextQuery<'a> {
         reader: &SegmentReader,
     ) -> Result<Option<Box<Iterator<Item = Result<u64, Error>>>>, Error> {
         let index = reader.string_index(self.field, self.analyzer).unwrap();
-        match index.doc_iter(self.field, &self.values[0])? {
+        match index.doc_iter(&self.values[0])? {
             Some(iter) => Ok(Some(Box::from(iter))),
             None => Ok(None),
         }

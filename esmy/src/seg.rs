@@ -3,17 +3,14 @@ use doc::Doc;
 use error::Error;
 use full_doc::FullDoc;
 use full_doc::FullDocReader;
-use rand::{self, Rng};
 use rmps;
 use std::any::Any;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io;
-use std::path::Path;
 use std::path::PathBuf;
 use string_index::StringIndex;
 use string_index::StringIndexReader;
-use walkdir::WalkDir;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(untagged)]
@@ -90,11 +87,6 @@ pub struct SegmentMeta {
     doc_count: u64,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct IndexMeta {
-    pub feature_template_metas: HashMap<String, FeatureMeta>,
-}
-
 #[derive(Clone)]
 pub struct SegmentSchema {
     pub features: HashMap<String, Box<Feature>>,
@@ -124,12 +116,6 @@ pub struct SegmentInfo {
     pub address: SegmentAddress,
     pub schema: SegmentSchema,
     pub doc_count: u64,
-}
-
-#[derive(Clone)]
-pub struct Index {
-    pub schema_template: SegmentSchema,
-    path: PathBuf,
 }
 
 pub fn schema_from_metas(feature_metas: HashMap<String, FeatureMeta>) -> SegmentSchema {
@@ -210,147 +196,6 @@ impl SegmentAddress {
     }
 }
 
-pub fn read_index_meta(path: &Path) -> Result<IndexMeta, Error> {
-    let file = File::open(path.join("index_meta"))?;
-    Ok(rmps::from_read(file)?)
-}
-
-pub fn write_index_meta(path: &Path, meta: &IndexMeta) -> Result<(), Error> {
-    let mut file = File::create(path.join("index_meta"))?;
-    Ok(rmps::encode::write(&mut file, meta)?)
-}
-
-impl Index {
-    pub fn new(schema_template: SegmentSchema, path: PathBuf) -> Index {
-        Index {
-            schema_template,
-            path,
-        }
-    }
-    pub fn new_address(&self) -> SegmentAddress {
-        SegmentAddress {
-            path: PathBuf::from(&self.path),
-            name: self::random_name(),
-        }
-    }
-
-    pub fn schema_template(&self) -> &SegmentSchema {
-        &self.schema_template
-    }
-
-    pub fn list_segments(&self) -> Vec<SegmentAddress> {
-        let walker = WalkDir::new(&self.path)
-            .min_depth(1)
-            .max_depth(1)
-            .into_iter();
-        let entries = walker.filter_entry(|e| {
-            e.file_type().is_dir() || e
-                .file_name()
-                .to_str()
-                .map(|s| s.ends_with(".seg"))
-                .unwrap_or(false)
-        });
-        entries
-            .map(|e| {
-                let name = String::from(
-                    e.unwrap()
-                        .file_name()
-                        .to_str()
-                        .unwrap()
-                        .split(".")
-                        .next()
-                        .unwrap(),
-                );
-                SegmentAddress {
-                    path: PathBuf::from(&self.path),
-                    name,
-                }
-            }).collect::<Vec<SegmentAddress>>()
-    }
-
-    pub fn merge(&self, addresses: &[&SegmentAddress]) -> Result<SegmentAddress, Error> {
-        let mut infos: Vec<SegmentInfo> = Vec::with_capacity(addresses.len());
-        for address in addresses.into_iter() {
-            let mut seg_file = address.open_file("seg")?;
-            let segment_meta: SegmentMeta = rmps::from_read(seg_file)?;
-
-            let mut features = HashMap::new();
-            for (name, feature_meta) in segment_meta.feature_metas {
-                let feature: Box<Feature> = match feature_meta.feature_type.as_ref() {
-                    "full_doc" => Box::new(FullDoc::from_config(feature_meta.feature_config)),
-                    "string_index" => {
-                        Box::new(StringIndex::from_config(feature_meta.feature_config))
-                    }
-                    //TODO error handling
-                    _ => panic!("No such feature"),
-                };
-                features.insert(name, feature);
-            }
-
-            infos.push(SegmentInfo {
-                address: (*address).clone(),
-                schema: SegmentSchema { features },
-                doc_count: segment_meta.doc_count,
-            });
-        }
-        let new_segment_address = SegmentAddress {
-            path: PathBuf::from(&self.path),
-            name: random_name(),
-        };
-        for (name, feature) in self.schema_template.features.iter() {
-            let old_addressses: Vec<(FeatureAddress, SegmentInfo)> = infos
-                .iter()
-                .map(|i| {
-                    (
-                        FeatureAddress {
-                            segment: i.address.clone(),
-                            name: name.clone(),
-                        },
-                        i.clone(),
-                    )
-                }).collect();
-            feature.merge_segments(
-                &old_addressses,
-                &FeatureAddress {
-                    segment: new_segment_address.clone(),
-                    name: name.clone(),
-                },
-            )?;
-        }
-        let doc_count: u64 = infos.iter().map(|i| i.doc_count).sum();
-        let mut feature_metas = HashMap::new();
-        for (name, feature) in &self.schema_template.features {
-            feature_metas.insert(
-                name.clone(),
-                FeatureMeta {
-                    feature_type: feature.feature_type().to_string(),
-                    feature_config: feature.to_config(),
-                },
-            );
-        }
-        let segment_meta = SegmentMeta {
-            feature_metas,
-            doc_count,
-        };
-        let mut file = new_segment_address.create_file("seg")?;
-        rmps::encode::write(&mut file, &segment_meta)?;
-        Ok(new_segment_address)
-    }
-}
-
-pub struct IndexReader {
-    segment_readers: Vec<SegmentReader>,
-}
-
-impl IndexReader {
-    pub fn segment_readers(&self) -> &[SegmentReader] {
-        &self.segment_readers
-    }
-}
-
-fn random_name() -> String {
-    rand::thread_rng().gen_ascii_chars().take(10).collect()
-}
 pub fn write_seg(
     schema: &SegmentSchema,
     address: &SegmentAddress,
@@ -375,6 +220,73 @@ pub fn write_seg(
     };
     let mut file = address.create_file("seg")?;
     rmps::encode::write(&mut file, &segment_meta).unwrap();
+    Ok(())
+}
+
+pub fn merge(
+    schema: &SegmentSchema,
+    new_address: &SegmentAddress,
+    addresses: &[&SegmentAddress],
+) -> Result<(), Error> {
+    let mut infos: Vec<SegmentInfo> = Vec::with_capacity(addresses.len());
+    for address in addresses.into_iter() {
+        let mut seg_file = address.open_file("seg")?;
+        let segment_meta: SegmentMeta = rmps::from_read(seg_file)?;
+
+        let mut features = HashMap::new();
+        for (name, feature_meta) in segment_meta.feature_metas {
+            let feature: Box<Feature> = match feature_meta.feature_type.as_ref() {
+                "full_doc" => Box::new(FullDoc::from_config(feature_meta.feature_config)),
+                "string_index" => Box::new(StringIndex::from_config(feature_meta.feature_config)),
+                //TODO error handling
+                _ => panic!("No such feature"),
+            };
+            features.insert(name, feature);
+        }
+
+        infos.push(SegmentInfo {
+            address: (*address).clone(),
+            schema: SegmentSchema { features },
+            doc_count: segment_meta.doc_count,
+        });
+    }
+    for (name, feature) in schema.features.iter() {
+        let old_addressses: Vec<(FeatureAddress, SegmentInfo)> = infos
+            .iter()
+            .map(|i| {
+                (
+                    FeatureAddress {
+                        segment: i.address.clone(),
+                        name: name.clone(),
+                    },
+                    i.clone(),
+                )
+            }).collect();
+        feature.merge_segments(
+            &old_addressses,
+            &FeatureAddress {
+                segment: new_address.clone(),
+                name: name.clone(),
+            },
+        )?;
+    }
+    let doc_count: u64 = infos.iter().map(|i| i.doc_count).sum();
+    let mut feature_metas = HashMap::new();
+    for (name, feature) in &schema.features {
+        feature_metas.insert(
+            name.clone(),
+            FeatureMeta {
+                feature_type: feature.feature_type().to_string(),
+                feature_config: feature.to_config(),
+            },
+        );
+    }
+    let segment_meta = SegmentMeta {
+        feature_metas,
+        doc_count,
+    };
+    let mut file = new_address.create_file("seg")?;
+    rmps::encode::write(&mut file, &segment_meta)?;
     Ok(())
 }
 

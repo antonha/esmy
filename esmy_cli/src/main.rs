@@ -7,12 +7,13 @@ extern crate time;
 use clap::{App, Arg, SubCommand};
 use esmy::analyzis::Analyzer;
 use esmy::doc::Doc;
-use esmy::index_manager::IndexManagerBuilder;
+use esmy::index::read_index_meta;
+use esmy::index::write_index_meta;
+use esmy::index::IndexBuilder;
+use esmy::index::IndexMeta;
 use esmy::search;
 use esmy::search::Collector;
-use esmy::seg;
 use esmy::seg::FeatureMeta;
-use esmy::seg::IndexMeta;
 use esmy::seg::SegmentReader;
 use std::collections::HashMap;
 use std::ops::Sub;
@@ -89,13 +90,7 @@ fn main() {
         if !index_path.exists() {
             std::fs::create_dir_all(&index_path).unwrap()
         }
-        let schema = seg::schema_from_metas(
-            seg::read_index_meta(&index_path)
-                .unwrap()
-                .feature_template_metas,
-        );
-        let index = seg::Index::new(schema, index_path);
-        let mut index_manager = IndexManagerBuilder::new().open(index).unwrap();
+        let mut index_manager = IndexBuilder::new().open(index_path.clone()).unwrap();
         let start_index = time::now();
         let stream =
             serde_json::Deserializer::from_reader(std::io::BufReader::new(std::io::stdin()))
@@ -128,13 +123,7 @@ fn main() {
         let analyzer = Analyzer::for_name(analyzer_string);
         let query_string = matches.value_of("QUERY").unwrap();
 
-        let schema = seg::schema_from_metas(
-            seg::read_index_meta(&index_path)
-                .unwrap()
-                .feature_template_metas,
-        );
-        let index = seg::Index::new(schema, index_path);
-        let index_manager = IndexManagerBuilder::new().open(index).unwrap();
+        let index_manager = IndexBuilder::new().open(index_path).unwrap();
         let index_reader = index_manager.open_reader();
         let query = search::TextQuery::new("body", &query_string, analyzer.as_ref());
         let mut collector = PrintAllCollector::new();
@@ -142,14 +131,14 @@ fn main() {
     }
     if let Some(matches) = matches.subcommand_matches("read-template") {
         let index_path = PathBuf::from(matches.value_of("path").unwrap());
-        let meta = seg::read_index_meta(&index_path).unwrap();
+        let meta = read_index_meta(&index_path).unwrap();
         serde_json::to_writer(std::io::stdout(), &meta.feature_template_metas).unwrap();
     }
     if let Some(matches) = matches.subcommand_matches("write-template") {
         let index_path = PathBuf::from(matches.value_of("path").unwrap());
         let feature_template_metas: HashMap<String, FeatureMeta> =
             serde_json::from_reader(std::io::stdin()).unwrap();
-        seg::write_index_meta(
+        write_index_meta(
             &index_path,
             &IndexMeta {
                 feature_template_metas,

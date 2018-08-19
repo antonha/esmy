@@ -175,7 +175,7 @@ impl Feature for StringIndex {
         let mut maps = Vec::with_capacity(old_segments.len());
         let mut source_id_doc_files = Vec::with_capacity(old_segments.len());
         {
-            for (old_address, old_info) in old_segments.iter() {
+            for (old_address, _old_info) in old_segments.iter() {
                 let path = old_address.with_ending(TERM_ID_LISTING);
                 maps.push(unsafe { Map::from_path(path).unwrap() });
                 source_id_doc_files.push(BufReader::new(File::open(
@@ -243,7 +243,7 @@ impl FeatureReader for StringIndexReader {
 }
 
 impl StringIndexReader {
-    pub fn doc_iter(&self, field: &str, term: &str) -> Result<Option<DocIter>, Error> {
+    pub fn doc_iter(&self, term: &str) -> Result<Option<DocIter>, Error> {
         let maybe_offset = self.term_offset(term)?;
         match maybe_offset {
             None => Ok(None),

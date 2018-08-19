@@ -1,12 +1,20 @@
 use super::Error;
 use doc::Doc;
+use rand;
+use rand::Rng;
+use rmps;
+use seg;
 use seg::write_seg;
-use seg::Index;
+use seg::FeatureMeta;
+use seg::SegmentSchema;
 use seg::{SegmentAddress, SegmentInfo, SegmentReader};
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::mem;
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::atomic;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -14,12 +22,14 @@ use std::sync::RwLock;
 use std::thread::sleep;
 use std::time::Duration;
 use threadpool::ThreadPool;
+use walkdir::WalkDir;
 
-pub struct IndexManager {
-    options: IndexManagerOptions,
-    index: Index,
+pub struct Index {
+    options: IndexOptions,
+    schema_template: SegmentSchema,
+    path: PathBuf,
     state: Arc<RwLock<IndexState>>,
-    pub pool: ThreadPool,
+    pool: ThreadPool,
 }
 
 struct IndexState {
@@ -71,62 +81,104 @@ impl Drop for SegRef {
     }
 }
 
-struct IndexManagerOptions {
+struct IndexOptions {
     auto_commit: bool,
     auto_merge: bool,
 }
 
-pub struct IndexManagerBuilder {
-    options: IndexManagerOptions,
+pub struct IndexBuilder {
+    options: IndexOptions,
 }
 
-impl IndexManagerBuilder {
-    pub fn new() -> IndexManagerBuilder {
-        IndexManagerBuilder {
-            options: IndexManagerOptions {
+impl IndexBuilder {
+    pub fn new() -> IndexBuilder {
+        IndexBuilder {
+            options: IndexOptions {
                 auto_commit: true,
                 auto_merge: true,
             },
         }
     }
 
-    pub fn auto_commit(mut self, val: bool) -> IndexManagerBuilder {
+    pub fn auto_commit(mut self, val: bool) -> IndexBuilder {
         self.options.auto_commit = val;
         self
     }
 
-    pub fn auto_merge(mut self, val: bool) -> IndexManagerBuilder {
+    pub fn auto_merge(mut self, val: bool) -> IndexBuilder {
         self.options.auto_merge = val;
         self
     }
 
-    pub fn open(self, index: Index) -> Result<IndexManager, Error> {
-        IndexManager::open_with_options(index, self.options)
+    pub fn open(self, path: PathBuf) -> Result<Index, Error> {
+        Index::open_with_options(path, self.options)
+    }
+
+    pub fn create(self, path: PathBuf, schema_template: SegmentSchema) -> Result<Index, Error> {
+        Index::create_with_options(path, schema_template, self.options)
     }
 }
 
-impl IndexManager {
-    pub fn open(index: Index) -> Result<IndexManager, Error> {
-        IndexManagerBuilder::new().open(index)
+#[derive(Serialize, Deserialize, Debug)]
+pub struct IndexMeta {
+    pub feature_template_metas: HashMap<String, FeatureMeta>,
+}
+
+pub fn read_index_meta(path: &Path) -> Result<IndexMeta, Error> {
+    let file = File::open(&path.join("index_meta"))?;
+    Ok(rmps::from_read(file)?)
+}
+
+pub fn write_index_meta(path: &Path, meta: &IndexMeta) -> Result<(), Error> {
+    let mut file = File::create(path.join("index_meta"))?;
+    Ok(rmps::encode::write(&mut file, meta)?)
+}
+
+impl Index {
+    pub fn open(path: PathBuf) -> Result<Index, Error> {
+        IndexBuilder::new().open(path)
     }
 
-    fn open_with_options(
-        index: Index,
-        options: IndexManagerOptions,
-    ) -> Result<IndexManager, Error> {
+    fn open_with_options(path: PathBuf, options: IndexOptions) -> Result<Index, Error> {
         let mut segments = HashMap::new();
-        for segment_address in index.list_segments() {
+        for segment_address in Index::list_segments(&path) {
             segments.insert(
                 segment_address.clone(),
                 Arc::from(SegRef::new(segment_address.read_info()?)),
             );
         }
-        Ok(IndexManager {
+        let schema = seg::schema_from_metas(read_index_meta(&path).unwrap().feature_template_metas);
+        Ok(Index {
             options,
-            index,
+            schema_template: schema,
+            path,
             state: Arc::new(RwLock::new(IndexState {
                 docs_to_index: Vec::new(),
                 active_segments: segments,
+                waiting_merge: HashSet::new(),
+            })),
+            pool: ThreadPool::new(4),
+        })
+    }
+
+    fn create_with_options(
+        path: PathBuf,
+        schema_template: SegmentSchema,
+        options: IndexOptions,
+    ) -> Result<Index, Error> {
+        write_index_meta(
+            &path,
+            &IndexMeta {
+                feature_template_metas: seg::schema_to_feature_metas(&schema_template),
+            },
+        )?;
+        Ok(Index {
+            options,
+            schema_template,
+            path,
+            state: Arc::new(RwLock::new(IndexState {
+                docs_to_index: Vec::new(),
+                active_segments: HashMap::new(),
                 waiting_merge: HashSet::new(),
             })),
             pool: ThreadPool::new(4),
@@ -141,8 +193,8 @@ impl IndexManager {
             local_state.docs_to_index.push(doc);
             if self.options.auto_commit && local_state.docs_to_index.len() > 10000 {
                 let to_commit = mem::replace(&mut local_state.docs_to_index, Vec::new());
-                let schema = self.index.schema_template().clone();
-                let address = self.index.new_address();
+                let schema = self.schema_template.clone();
+                let address = self.new_segment_address();
                 let state = self.state.clone();
                 self.pool.execute(move || {
                     write_seg(&schema, &address, &to_commit).unwrap();
@@ -164,12 +216,8 @@ impl IndexManager {
             self.wait_jobs(0);
             let mut local_state = self.state.write().unwrap();
             if !local_state.docs_to_index.is_empty() {
-                let address = self.index.new_address();
-                write_seg(
-                    &self.index.schema_template(),
-                    &address,
-                    &local_state.docs_to_index,
-                )?;
+                let address = self.new_segment_address();
+                write_seg(&self.schema_template, &address, &local_state.docs_to_index)?;
                 local_state.active_segments.insert(
                     address.clone(),
                     Arc::new(SegRef::new(address.read_info().unwrap())),
@@ -182,6 +230,41 @@ impl IndexManager {
         }
         self.wait_jobs(0);
         Ok(())
+    }
+
+    fn new_segment_address(&self) -> SegmentAddress {
+        let name: String = rand::thread_rng().gen_ascii_chars().take(10).collect();
+        SegmentAddress {
+            path: PathBuf::from(&self.path),
+            name,
+        }
+    }
+
+    fn list_segments(path: &PathBuf) -> Vec<SegmentAddress> {
+        let walker = WalkDir::new(path).min_depth(1).max_depth(1).into_iter();
+        let entries = walker.filter_entry(|e| {
+            e.file_type().is_dir() || e
+                .file_name()
+                .to_str()
+                .map(|s| s.ends_with(".seg"))
+                .unwrap_or(false)
+        });
+        entries
+            .map(|e| {
+                let name = String::from(
+                    e.unwrap()
+                        .file_name()
+                        .to_str()
+                        .unwrap()
+                        .split(".")
+                        .next()
+                        .unwrap(),
+                );
+                SegmentAddress {
+                    path: PathBuf::from(path),
+                    name,
+                }
+            }).collect::<Vec<SegmentAddress>>()
     }
 
     pub fn merge(&self) {
@@ -210,23 +293,22 @@ impl IndexManager {
             let seg_cloned: Vec<SegmentAddress> =
                 segments.iter().map(|info| info.address.clone()).collect();
             let state = self.state.clone();
-            let index = self.index.clone();
+            let schema = self.schema_template.clone();
+            let new_address = self.new_segment_address();
             self.pool.execute(move || {
                 let addresses_to_merge: Vec<&SegmentAddress> =
                     seg_cloned.iter().map(|address| address).collect();
-                let new_segment_address = index.merge(&addresses_to_merge).unwrap();
+                seg::merge(&schema, &new_address, &addresses_to_merge).unwrap();
                 let mut local_state = state.write().unwrap();
                 for old_segment in seg_cloned.iter() {
-                    //TODO inefficient
+                    //TODO inefficient iteration
                     if let Some(old_ref) = local_state.active_segments.remove(old_segment) {
                         old_ref.delete_on_drop.store(true, atomic::Ordering::SeqCst)
                     }
                     local_state.waiting_merge.remove(old_segment);
                 }
-                let new_info = Arc::new(SegRef::new(new_segment_address.read_info().unwrap()));
-                local_state
-                    .active_segments
-                    .insert(new_segment_address, new_info);
+                let new_info = Arc::new(SegRef::new(new_address.read_info().unwrap()));
+                local_state.active_segments.insert(new_address, new_info);
             });
         }
     }

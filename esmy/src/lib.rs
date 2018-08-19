@@ -20,7 +20,7 @@ pub mod analyzis;
 pub mod doc;
 pub mod error;
 pub mod full_doc;
-pub mod index_manager;
+pub mod index;
 pub mod search;
 pub mod seg;
 pub mod string_index;
