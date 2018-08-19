@@ -35,12 +35,9 @@ pub struct StringIndex {
 }
 
 impl StringIndex {
-    pub fn new<T>(field_name: T, analyzer: Box<Analyzer>) -> StringIndex
-    where
-        T: Into<String>,
-    {
+    pub fn new<T>(field_name: String, analyzer: Box<Analyzer>) -> StringIndex {
         StringIndex {
-            field_name: field_name.into(),
+            field_name,
             analyzer,
         }
     }
