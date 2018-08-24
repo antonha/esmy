@@ -6,8 +6,8 @@ use analyzis::WhiteSpaceAnalyzer;
 use doc::Doc;
 use doc::FieldValue;
 use error::Error;
-use fst::map::OpBuilder;
 use fst::{self, Map, MapBuilder, Streamer};
+use fst::map::OpBuilder;
 use seg::Feature;
 use seg::FeatureAddress;
 use seg::FeatureConfig;
@@ -22,8 +22,10 @@ use std::io::BufWriter;
 use std::io::Seek;
 use std::io::SeekFrom;
 use std::io::Write;
+use std::io::Read;
 use util::read_vint;
 use util::write_vint;
+use std::iter::FromIterator;
 
 const TERM_ID_LISTING: &'static str = "tid";
 const ID_DOC_LISTING: &'static str = "iddoc";
@@ -46,8 +48,7 @@ impl StringIndex {
 impl StringIndex {
     fn docs_to_term_map<'a>(&self, docs: &'a [Doc]) -> Vec<(Cow<'a, str>, u64)> {
         let mut terms: Vec<(Cow<'a, str>, u64)> = Vec::new();
-        {
-            for (doc_id, doc) in docs.iter().enumerate() {
+        for (doc_id, doc) in docs.iter().enumerate() {
                 for (_name, val) in doc.iter().filter(|e| e.0 == &self.field_name) {
                     match *val {
                         FieldValue::String(ref value) => for token in self.analyzer.analyze(&value)
@@ -57,7 +58,6 @@ impl StringIndex {
                     };
                 }
             }
-        }
         afsort::sort_unstable_by(&mut terms, |t| &t.0);
         terms
     }
@@ -71,16 +71,20 @@ impl StringIndex {
             return Ok(());
         }
 
-        let mut offset: u64 = 0;
-        let tid = File::create(address.with_ending(TERM_ID_LISTING))?;
-        //TODO: Not unwrap
-        let mut tid_builder = MapBuilder::new(BufWriter::new(tid))?;
+        let fst_writer = BufWriter::new(File::create(address.with_ending(TERM_ID_LISTING))?);
         let mut iddoc = BufWriter::new(File::create(address.with_ending(ID_DOC_LISTING))?);
+
+
+        let mut fst_builder = MapBuilder::new(fst_writer)?;
+
+        let mut offset: u64 = 0;
+        //TODO: Not unwrap
+
         let mut ids = Vec::new();
         let mut last_term = &terms[0].0;
         for &(ref term, id) in terms.iter() {
             if term != last_term {
-                tid_builder.insert(&last_term.as_bytes(), offset)?;
+                fst_builder.insert(&last_term.as_bytes(), offset)?;
                 offset += write_vint(&mut iddoc, ids.len() as u64)? as u64;
                 for id in ids.iter() {
                     offset += write_vint(&mut iddoc, *id)? as u64;
@@ -90,12 +94,12 @@ impl StringIndex {
             ids.push(id);
             last_term = term;
         }
-        tid_builder.insert(&last_term.as_bytes(), offset)?;
+        fst_builder.insert(&last_term.as_bytes(), offset)?;
         offset += write_vint(&mut iddoc, ids.len() as u64)? as u64;
         for id in ids.iter() {
             offset += write_vint(&mut iddoc, *id)? as u64;
         }
-        tid_builder.finish()?;
+        fst_builder.finish()?;
         iddoc.flush()?;
         Ok(())
     }
@@ -143,6 +147,27 @@ impl Feature for StringIndex {
         self.write_term_map(address, term_map)
     }
 
+
+    fn merge_segments(
+        &self,
+        old_segments: &[(FeatureAddress, SegmentInfo)],
+        new_segment: &FeatureAddress,
+    ) -> Result<(), Error> {
+        let mut sources : Vec<(u64, Map, BufReader<File>)> = Vec::with_capacity(old_segments.len());
+        for (old_address, old_info) in old_segments{
+            sources.push((
+                old_info.doc_count,
+                unsafe {Map::from_path(old_address.with_ending(&TERM_ID_LISTING))?},
+                BufReader::new(File::open(old_address.with_ending(ID_DOC_LISTING))?)
+            ))
+        }
+        let mut target = (
+            MapBuilder::new(BufWriter::new(File::open(new_segment.with_ending(&TERM_ID_LISTING))?))?,
+            BufWriter::new(File::open(&ID_DOC_LISTING)?)
+        );
+        do_merge(&mut sources, &mut target)
+    }
+
     fn reader(&self, address: &FeatureAddress) -> Box<FeatureReader> {
         let path = address.with_ending(TERM_ID_LISTING);
         if path.exists() {
@@ -164,74 +189,8 @@ impl Feature for StringIndex {
         }
     }
 
-    fn merge_segments(
-        &self,
-        old_segments: &[(FeatureAddress, SegmentInfo)],
-        new_segment: &FeatureAddress,
-    ) -> Result<(), Error> {
-        println!("Foobar");
-        let mut maps = Vec::with_capacity(old_segments.len());
-        let mut source_id_doc_files = Vec::with_capacity(old_segments.len());
-        {
-            for (old_address, _old_info) in old_segments.iter() {
-                let path = old_address.with_ending(TERM_ID_LISTING);
-                maps.push(unsafe { Map::from_path(path).unwrap() });
-                source_id_doc_files.push(BufReader::new(File::open(
-                    old_address.with_ending(&TERM_ID_LISTING),
-                )?));
-            }
-
-            let mut op_builder = OpBuilder::new();
-            for map in maps.iter() {
-                op_builder.push(map.stream());
-            }
-
-            let tid = File::create(new_segment.with_ending(TERM_ID_LISTING))?;
-            let mut tid_builder = MapBuilder::new(BufWriter::new(tid))?;
-            let fp = File::create(new_segment.with_ending(ID_DOC_LISTING))?;
-            let mut iddoc = BufWriter::new(fp);
-            let mut new_offsets = Vec::with_capacity(old_segments.len());
-            {
-                let mut new_offset = 0;
-                for (_old_address, old_info) in old_segments.iter() {
-                    new_offsets.push(new_offset);
-                    new_offset += old_info.doc_count;
-                }
-            }
-
-            println!("Foobar pre-union");
-
-            let mut union = op_builder.union();
-            let mut offset = 0u64;
-            while let Some((term, term_offsets)) = union.next() {
-                tid_builder.insert(term, offset).unwrap();
-                let mut term_doc_counts: Vec<u64> = vec![0; old_segments.len()];
-                for term_offset in term_offsets {
-                    let source_id_doc_file = &mut source_id_doc_files[term_offset.index];
-                    source_id_doc_file.seek(SeekFrom::Start(term_offset.value as u64))?;
-                    term_doc_counts[term_offset.index] = read_vint(source_id_doc_file)? as u64;
-                }
-                let term_doc_count: u64 = term_doc_counts.iter().sum();
-                offset += write_vint(&mut iddoc, term_doc_count)? as u64;
-
-                for term_offset in term_offsets.iter() {
-                    let source_id_doc_file = &mut source_id_doc_files[term_offset.index];
-                    for i in 0..term_doc_counts[term_offset.index] {
-                        println!("Foobar2 pre-read {}", i);
-                        let doc_id = read_vint(source_id_doc_file)?;
-                        println!("Foobar2 post-read");
-                        offset +=
-                            write_vint(&mut iddoc, new_offsets[term_offset.index] + doc_id)? as u64;
-                    }
-                }
-            }
-            tid_builder.finish()?;
-            iddoc.flush()?;
-            println!("Foobar done");
-        }
-        Ok(())
-    }
 }
+
 
 pub struct StringIndexReader {
     pub feature: StringIndex,
@@ -295,4 +254,49 @@ impl From<fst::Error> for Error {
     fn from(e: fst::Error) -> Self {
         return Error::Other(Box::new(e));
     }
+}
+
+fn do_merge<R, W>(sources: &mut [(u64, Map, R)], target: &mut (MapBuilder<W>, W))
+    -> Result<(), Error>
+    where W: Write + Sized,
+     R: Read + Seek + Sized
+{
+
+    let mut new_offsets = Vec::with_capacity(sources.len());
+    let mut new_offset = 0;
+    for (doc_count, _, _) in sources.iter() {
+        new_offsets.push(new_offset);
+        new_offset += doc_count;
+    }
+    let mut op_builder = OpBuilder::new();
+    for (_, source_terms, _) in sources.iter() {
+        op_builder.push(source_terms.stream())
+    }
+    let mut union = op_builder.union();
+    let mut offset = 0u64;
+    let mut term_builder = target.0;
+    while let Some((term, term_offsets)) = union.next() {
+        &target.0.insert(term, offset)?;
+
+        let mut term_doc_counts: Vec<u64> = vec![0; sources.len()];
+        for term_offset in term_offsets {
+            let source_postings = &mut sources[term_offset.index].2;
+            source_postings.seek(SeekFrom::Start(term_offset.value as u64))?;
+            term_doc_counts[term_offset.index] = read_vint(source_postings)? as u64;
+        }
+
+        let term_doc_count: u64 = term_doc_counts.iter().sum();
+        offset += write_vint(&mut (target.1), term_doc_count)? as u64;
+        for term_offset in term_offsets {
+            let source_id_doc_file = &mut sources[term_offset.index].2;
+            for i in 0..term_doc_counts[term_offset.index] {
+                let doc_id = read_vint(source_id_doc_file)?;
+                offset +=
+                    write_vint(&mut target.1, new_offsets[term_offset.index] + doc_id as u64)? as u64;
+            }
+        }
+    }
+    target.0.finish()?;
+    (&target.1).flush()?;
+    Ok(())
 }

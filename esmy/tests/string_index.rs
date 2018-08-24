@@ -22,6 +22,7 @@ mod tests {
     use std::env;
     use std::fs;
     use std::path::Path;
+    use proptest::test_runner::Config;
 
     #[derive(Debug, Clone)]
     enum IndexOperation {
@@ -31,7 +32,7 @@ mod tests {
     }
 
     fn arb_fieldvalue() -> BoxedStrategy<FieldValue> {
-        prop_oneof!["[a-z]+".prop_map(FieldValue::String),].boxed()
+        "[a-z]+".prop_map(FieldValue::String).boxed()
     }
 
     fn arb_fieldname() -> BoxedStrategy<String> {
@@ -95,6 +96,7 @@ mod tests {
 
     proptest! {
 
+        #![proptest_config(Config::with_cases(1_000))]
         #[test]
         fn finds_merged((ref ops, ref queries) in op_and_queries()) {
             let index_path = env::current_dir().expect("failed to get current dir").join(&Path::new("tmp/tests/index"));
