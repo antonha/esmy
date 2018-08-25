@@ -207,8 +207,8 @@ impl Index {
             self.rayon_pool.install(move || -> Result<(), Error> {
                 let to_commit =
                     mem::replace(&mut self.state.write().unwrap().docs_to_index, Vec::new());
-
-                to_commit.par_chunks(to_commit.len() / 16).try_for_each(
+                let chunk_size = ::std::cmp::max(to_commit.len(), to_commit.len() / 16);
+                to_commit.par_chunks(chunk_size).try_for_each(
                     |chunk| -> Result<(), Error> {
                         let address = new_segment_address(&self.path);
                         write_seg(&self.schema_template, &address, &chunk)?;
