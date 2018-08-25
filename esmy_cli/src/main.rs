@@ -19,6 +19,8 @@ use esmy::Error;
 use std::collections::HashMap;
 use std::ops::Sub;
 use std::path::PathBuf;
+use std::sync::mpsc;
+use std::thread;
 
 fn main() {
     match esmy_main() {
@@ -98,13 +100,23 @@ fn esmy_main() -> Result<(), Error> {
         if !index_path.exists() {
             std::fs::create_dir_all(&index_path)?
         }
-        let mut index_manager = IndexBuilder::new().auto_commit(false).open(index_path.clone())?;
+        let mut index_manager = IndexBuilder::new()
+            .auto_merge(false)
+            .open(index_path.clone())?;
         let start_index = time::now();
-        let stream =
-            serde_json::Deserializer::from_reader(std::io::BufReader::new(std::io::stdin()))
-                .into_iter::<Doc>();
+
+        let (sender, receiver) = mpsc::sync_channel(100_000);
+        thread::spawn(move || {
+            let stream =
+                serde_json::Deserializer::from_reader(std::io::BufReader::new(std::io::stdin()))
+                    .into_iter::<Doc>();
+            for doc in stream {
+                sender.send(doc).unwrap();
+            }
+        });
+
         let mut i = 0i64;
-        for doc in stream {
+        for doc in receiver {
             index_manager.add_doc(doc.unwrap())?;
             i += 1;
             if verbose && i % 50000 == 0 {
@@ -113,7 +125,7 @@ fn esmy_main() -> Result<(), Error> {
                     "Written: {} took: {}, dps: {}",
                     i,
                     used,
-                    (i) / (1 + used / 1000)
+                    (i) / (used / 1000)
                 );
             }
         }

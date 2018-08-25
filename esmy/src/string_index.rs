@@ -1,3 +1,4 @@
+use afsort;
 use analyzis::Analyzer;
 use analyzis::NoopAnalyzer;
 use analyzis::UAX29Analyzer;
@@ -24,7 +25,6 @@ use std::io::SeekFrom;
 use std::io::Write;
 use util::read_vint;
 use util::write_vint;
-use rayon::prelude::*;
 
 const TERM_ID_LISTING: &'static str = "tid";
 const ID_DOC_LISTING: &'static str = "iddoc";
@@ -46,25 +46,27 @@ impl StringIndex {
 
 impl StringIndex {
     fn docs_to_term_map<'a>(&self, docs: &'a [Doc]) -> Vec<(Cow<'a, str>, u64)> {
-
-        let mut terms: Vec<(Cow<'a, str>, u64)> = Vec::new();
         let analyzer = &self.analyzer;
         let field_name = &self.field_name;
-        let mut terms: Vec<(Cow<'a, str>, u64)> = docs.par_iter().enumerate().flat_map(|(doc_id, doc)| {
-            let mut doc_terms = Vec::new();
-            for (_name, val) in doc.iter().filter(|e| e.0 == field_name) {
-                match *val {
-                    FieldValue::String(ref value) => {
-                        doc_terms.extend(analyzer.analyze(value).map(|token|(token, doc_id as u64)));
-                    },
-                };
-            }
-            doc_terms
-        }).collect();
-        terms.par_sort_unstable_by(|t1, t2|(t1.0).cmp(&t2.0));
+        let mut terms: Vec<(Cow<'a, str>, u64)> = docs
+            .iter()
+            .enumerate()
+            .flat_map(|(doc_id, doc)| {
+                let mut doc_terms = Vec::new();
+                for (_name, val) in doc.iter().filter(|e| e.0 == field_name) {
+                    match *val {
+                        FieldValue::String(ref value) => {
+                            doc_terms.extend(
+                                analyzer.analyze(value).map(|token| (token, doc_id as u64)),
+                            );
+                        }
+                    };
+                }
+                doc_terms
+            }).collect();
+        afsort::sort_unstable_by(&mut terms, |t| &t.0);
         terms
     }
-
 }
 
 impl Feature for StringIndex {
@@ -240,9 +242,10 @@ impl From<fst::Error> for Error {
 fn write_term_map<W>(
     terms: Vec<(Cow<str>, u64)>,
     mut target_terms: MapBuilder<W>,
-    mut target_postings: W
+    mut target_postings: W,
 ) -> Result<(), Error>
-    where W: Write + Sized
+where
+    W: Write + Sized,
 {
     if terms.is_empty() {
         return Ok(());
@@ -274,10 +277,7 @@ fn write_term_map<W>(
     Ok(())
 }
 
-fn do_merge<R, W>(
-    sources: &mut [(u64, Map, R)],
-    target: (MapBuilder<W>, W),
-) -> Result<(), Error>
+fn do_merge<R, W>(sources: &mut [(u64, Map, R)], target: (MapBuilder<W>, W)) -> Result<(), Error>
 where
     W: Write + Sized,
     R: Read + Seek + Sized,
@@ -285,7 +285,7 @@ where
     let (mut term_builder, mut target_postings) = target;
     let (ref mut new_offsets, ref mut union, ref mut source_postings) = {
         let mut new_offset = 0u64;
-        let mut new_offsets  = Vec::with_capacity(sources.len());
+        let mut new_offsets = Vec::with_capacity(sources.len());
 
         let mut op_builder = OpBuilder::new();
         let mut source_postings = Vec::new();

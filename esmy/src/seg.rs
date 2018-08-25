@@ -3,6 +3,7 @@ use doc::Doc;
 use error::Error;
 use full_doc::FullDoc;
 use full_doc::FullDocReader;
+use rayon::prelude::*;
 use rmps;
 use std::any::Any;
 use std::collections::HashMap;
@@ -11,7 +12,6 @@ use std::io;
 use std::path::PathBuf;
 use string_index::StringIndex;
 use string_index::StringIndexReader;
-use rayon::prelude::*;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(untagged)]
@@ -222,15 +222,15 @@ pub fn write_seg(
     if docs.is_empty() {
         return Ok(());
     }
-    for (name, feature) in &schema.features {
+    &schema.features.par_iter().try_for_each(|(name, feature)| {
         feature.write_segment(
             &FeatureAddress {
                 segment: address.clone(),
                 name: name.clone(),
             },
             docs,
-        )?;
-    }
+        )
+    })?;
     let feature_metas = schema_to_feature_metas(&schema);
     let segment_meta = SegmentMeta {
         feature_metas,
@@ -268,26 +268,29 @@ pub fn merge(
             doc_count: segment_meta.doc_count,
         });
     }
-    schema.features.par_iter().try_for_each( | (name, feature) |  -> Result<(), Error> {
-        let old_addressses: Vec<(FeatureAddress, SegmentInfo)> = infos
-            .iter()
-            .map(|i| {
-                (
-                    FeatureAddress {
-                        segment: i.address.clone(),
-                        name: name.clone(),
-                    },
-                    i.clone(),
-                )
-            }).collect();
-        feature.merge_segments(
-            &old_addressses,
-            &FeatureAddress {
-                segment: new_address.clone(),
-                name: name.clone(),
-            },
-        )
-    })?;
+    schema
+        .features
+        .par_iter()
+        .try_for_each(|(name, feature)| -> Result<(), Error> {
+            let old_addressses: Vec<(FeatureAddress, SegmentInfo)> = infos
+                .iter()
+                .map(|i| {
+                    (
+                        FeatureAddress {
+                            segment: i.address.clone(),
+                            name: name.clone(),
+                        },
+                        i.clone(),
+                    )
+                }).collect();
+            feature.merge_segments(
+                &old_addressses,
+                &FeatureAddress {
+                    segment: new_address.clone(),
+                    name: name.clone(),
+                },
+            )
+        })?;
     let doc_count: u64 = infos.iter().map(|i| i.doc_count).sum();
     let mut feature_metas = HashMap::new();
     for (name, feature) in &schema.features {

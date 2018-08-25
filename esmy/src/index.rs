@@ -194,7 +194,7 @@ impl Index {
         {
             let mut local_state = self.state.write().unwrap();
             local_state.docs_to_index.push(doc);
-            if self.options.auto_commit && local_state.docs_to_index.len() > 1000 {
+            if self.options.auto_commit && local_state.docs_to_index.len() >= 10_000 {
                 drop(local_state);
                 self.commit()?;
             }
@@ -203,17 +203,22 @@ impl Index {
     }
 
     pub fn commit(&self) -> Result<(), Error> {
-        println!("Commiting docs");
         if !self.state.read().unwrap().docs_to_index.is_empty() {
             self.rayon_pool.install(move || -> Result<(), Error> {
-                let address = new_segment_address(&self.path);
                 let to_commit =
                     mem::replace(&mut self.state.write().unwrap().docs_to_index, Vec::new());
-                write_seg(&self.schema_template, &address, &to_commit)?;
-                self.state.write().unwrap().active_segments.insert(
-                    address.clone(),
-                    Arc::new(SegRef::new(address.read_info().unwrap())),
-                );
+
+                to_commit.par_chunks(to_commit.len() / 16).try_for_each(
+                    |chunk| -> Result<(), Error> {
+                        let address = new_segment_address(&self.path);
+                        write_seg(&self.schema_template, &address, &chunk)?;
+                        self.state.write().unwrap().active_segments.insert(
+                            address.clone(),
+                            Arc::new(SegRef::new(address.read_info().unwrap())),
+                        );
+                        Ok(())
+                    },
+                )?;
                 Ok(())
             })?;
             if self.options.auto_merge {
