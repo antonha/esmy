@@ -11,6 +11,7 @@ use std::io;
 use std::path::PathBuf;
 use string_index::StringIndex;
 use string_index::StringIndexReader;
+use rayon::prelude::*;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(untagged)]
@@ -267,7 +268,7 @@ pub fn merge(
             doc_count: segment_meta.doc_count,
         });
     }
-    for (name, feature) in schema.features.iter() {
+    schema.features.par_iter().try_for_each( | (name, feature) |  -> Result<(), Error> {
         let old_addressses: Vec<(FeatureAddress, SegmentInfo)> = infos
             .iter()
             .map(|i| {
@@ -285,8 +286,8 @@ pub fn merge(
                 segment: new_address.clone(),
                 name: name.clone(),
             },
-        )?;
-    }
+        )
+    })?;
     let doc_count: u64 = infos.iter().map(|i| i.doc_count).sum();
     let mut feature_metas = HashMap::new();
     for (name, feature) in &schema.features {

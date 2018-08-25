@@ -251,14 +251,14 @@ impl Index {
     }
 
     pub fn merge(&self) -> Result<(), Error> {
-        self.rayon_pool.install(|| -> Result<(), Error>{
+        self.rayon_pool.install(|| -> Result<(), Error> {
             self.submit_merges()?;
             Ok(())
         })
     }
 
     fn submit_merges(&self) -> Result<(), Error> {
-        let infos : Vec<SegmentInfo> = {
+        let infos: Vec<SegmentInfo> = {
             let local_state = &self.state.write().unwrap();
             local_state
                 .active_segments

@@ -18,11 +18,11 @@ mod tests {
     use proptest::collection::hash_map;
     use proptest::collection::vec;
     use proptest::prelude::*;
+    use proptest::test_runner::Config;
     use std::collections::HashMap;
     use std::env;
     use std::fs;
     use std::path::Path;
-    use proptest::test_runner::Config;
 
     #[derive(Debug, Clone)]
     enum IndexOperation {

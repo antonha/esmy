@@ -6,14 +6,14 @@ use std::convert::From;
 #[derive(Debug)]
 pub enum Error {
     IOError(std::io::Error),
-    Other(Box<std::error::Error + Send>)
+    Other(Box<std::error::Error + Send>),
 }
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match *self {
-            Error::IOError(ref io)=> io.fmt(f),
-            Error::Other(ref err) => err.fmt(f)
+            Error::IOError(ref io) => io.fmt(f),
+            Error::Other(ref err) => err.fmt(f),
         }
     }
 }
@@ -22,16 +22,14 @@ impl std::error::Error for Error {
     fn description(&self) -> &str {
         match *self {
             Error::IOError(ref io) => io.description(),
-            Error::Other(ref other) => other.description()
+            Error::Other(ref other) => other.description(),
         }
     }
 
     fn cause(&self) -> Option<&std::error::Error> {
         match *self {
             Error::IOError(ref io) => Some(io),
-            Error::Other(ref other) => {
-                Some(&**other)
-            }
+            Error::Other(ref other) => Some(&**other),
         }
     }
 }

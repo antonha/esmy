@@ -5,6 +5,7 @@ authors = ["Anton Hägerstrand <anton.hagerstrand@gmail.com>"]
 
 [dependencies]
 esmy = { version = "0.1.0", path = "../esmy" }
+rayon = "1"
 time = "0.1"
 clap = "2"
 serde = "1.0"

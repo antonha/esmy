@@ -32,8 +32,8 @@ mod tests {
     use super::read_vint;
     use super::write_vint;
     use proptest::prelude::*;
-    use std::io::Cursor;
     use proptest::test_runner::Config;
+    use std::io::Cursor;
 
     proptest!{
         #![proptest_config(Config::with_cases(100_000))]
