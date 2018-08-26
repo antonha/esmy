@@ -42,49 +42,57 @@ fn esmy_main() -> Result<(), Error> {
                         Arg::with_name("path").short("p").default_value(".").help(
                             "The path to index at. Defaults to the current working directory.",
                         ),
-                    ).arg(
+                    )
+                    .arg(
                         Arg::with_name("clear")
                             .short("c")
                             .help("If the index path should be cleared before indexing.."),
-                    ).arg(
+                    )
+                    .arg(
                         Arg::with_name("v")
                             .short("v")
                             .multiple(true)
                             .help("Sets the level of verbosity"),
                     ),
-            ).subcommand(
+            )
+            .subcommand(
                 SubCommand::with_name("list")
                     .about("Lists all documents matching a query.")
                     .arg(
                         Arg::with_name("path").short("p").default_value(".").help(
                             "The path to index at. Defaults to the current working directory.",
                         ),
-                    ).arg(
+                    )
+                    .arg(
                         Arg::with_name("QUERY")
                             .required(true)
                             .index(1)
                             .help("If the index path should be cleared before indexing.."),
-                    ).arg(
+                    )
+                    .arg(
                         Arg::with_name("analyzer")
                             .default_value("noop")
                             .short("a")
                             .help("Which analyzer to use."),
                     ),
-            ).subcommand(
+            )
+            .subcommand(
                 SubCommand::with_name("read-template").about("foo").arg(
                     Arg::with_name("path")
                         .short("p")
                         .default_value(".")
                         .help("The path to index at. Defaults to the current working directory."),
                 ),
-            ).subcommand(
+            )
+            .subcommand(
                 SubCommand::with_name("write-template").arg(
                     Arg::with_name("path")
                         .short("p")
                         .default_value(".")
                         .help("The path to index at. Defaults to the current working directory."),
                 ),
-            ).get_matches();
+            )
+            .get_matches();
 
     if let Some(matches) = matches.subcommand_matches("index") {
         let index_path = PathBuf::from(matches.value_of("path").unwrap());
@@ -100,16 +108,14 @@ fn esmy_main() -> Result<(), Error> {
         if !index_path.exists() {
             std::fs::create_dir_all(&index_path)?
         }
-        let mut index_manager = IndexBuilder::new()
-            .auto_merge(false)
-            .open(index_path.clone())?;
+        let mut index_manager = IndexBuilder::new().open(index_path.clone())?;
         let start_index = time::now();
 
         let (sender, receiver) = mpsc::sync_channel(100_000);
         thread::spawn(move || {
-            let stream =
-                serde_json::Deserializer::from_reader(std::io::BufReader::new(std::io::stdin()))
-                    .into_iter::<Doc>();
+            let stream = serde_json::Deserializer::from_reader(std::io::BufReader::new(
+                std::io::stdin(),
+            )).into_iter::<Doc>();
             for doc in stream {
                 sender.send(doc).unwrap();
             }
@@ -144,7 +150,7 @@ fn esmy_main() -> Result<(), Error> {
         let query_string = matches.value_of("QUERY").unwrap();
 
         let index_manager = IndexBuilder::new().open(index_path)?;
-        let index_reader = index_manager.open_reader();
+        let index_reader = index_manager.open_reader()?;
         let query = search::TextQuery::new("body", &query_string, analyzer.as_ref());
         let mut collector = PrintAllCollector::new();
         search::search(&index_reader, &query, &mut collector)?;
@@ -179,7 +185,10 @@ impl PrintAllCollector {
 impl Collector for PrintAllCollector {
     fn collect(&mut self, reader: &SegmentReader, doc_id: u64) -> Result<(), Error> {
         let doc = reader.full_doc().unwrap().read_doc(doc_id)?;
-        serde_json::to_writer(std::io::stdout(), &doc).unwrap();
+        //TODO error handling could be better
+        match serde_json::to_writer(std::io::stdout(), &doc){
+            _ => ()
+        }
         println!();
         Ok(())
     }

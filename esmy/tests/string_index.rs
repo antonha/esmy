@@ -136,13 +136,13 @@ mod tests {
                         .cloned()
                         .collect();
                     let mut collector = AllDocsCollector::new();
-                    search(&index_manager.open_reader(), query, &mut collector).unwrap();
+                    search(&index_manager.open_reader().unwrap(), query, &mut collector).unwrap();
                     assert_same_docs(&expected_matches, collector.docs());
                 }
             }
         }
-
     }
+
     fn assert_same_docs(expected: &[Doc], actual: &[Doc]) {
         assert_eq!(expected.len(), actual.len());
         for doc in actual {

@@ -63,7 +63,8 @@ impl StringIndex {
                     };
                 }
                 doc_terms
-            }).collect();
+            })
+            .collect();
         afsort::sort_unstable_by(&mut terms, |t| &t.0);
         terms
     }
@@ -123,12 +124,15 @@ impl Feature for StringIndex {
             memory_indices.push(res?);
         }*/
         let terms = self.docs_to_term_map(docs);
-
-        let fst_writer = BufWriter::new(File::create(address.with_ending(TERM_ID_LISTING))?);
-        let target_postings = BufWriter::new(File::create(address.with_ending(ID_DOC_LISTING))?);
-        let target_terms = MapBuilder::new(fst_writer)?;
-        write_term_map(terms, target_terms, target_postings)
-        //do_merge(&mut memory_indices, (fst_builder, iddoc))
+        if terms.len() > 0 {
+            let fst_writer = BufWriter::new(File::create(address.with_ending(TERM_ID_LISTING))?);
+            let target_postings =
+                BufWriter::new(File::create(address.with_ending(ID_DOC_LISTING))?);
+            let target_terms = MapBuilder::new(fst_writer)?;
+            write_term_map(terms, target_terms, target_postings)?;
+            //do_merge(&mut memory_indices, (fst_builder, iddoc))
+        }
+        Ok(())
     }
 
     fn merge_segments(
@@ -145,32 +149,33 @@ impl Feature for StringIndex {
             ))
         }
         let target = (
-            MapBuilder::new(BufWriter::new(File::open(
+            MapBuilder::new(BufWriter::new(File::create(
                 new_segment.with_ending(&TERM_ID_LISTING),
             )?))?,
-            BufWriter::new(File::open(&ID_DOC_LISTING)?),
+            BufWriter::new(File::create(new_segment.with_ending(&ID_DOC_LISTING))?),
         );
-        do_merge(&mut sources, target)
+        do_merge(&mut sources, target)?;
+        Ok(())
     }
 
-    fn reader(&self, address: &FeatureAddress) -> Box<FeatureReader> {
+    fn reader(&self, address: &FeatureAddress) -> Result<Box<FeatureReader>, Error> {
         let path = address.with_ending(TERM_ID_LISTING);
         if path.exists() {
-            Box::new({
+            Ok(Box::new({
                 StringIndexReader {
                     feature: self.clone(),
                     address: address.clone(),
-                    map: Some(unsafe { Map::from_path(path).unwrap() }),
+                    map: Some(unsafe { Map::from_path(path)? }),
                 }
-            })
+            }))
         } else {
-            Box::new({
+            Ok(Box::new({
                 StringIndexReader {
                     feature: self.clone(),
                     address: address.clone(),
                     map: None,
                 }
-            })
+            }))
         }
     }
 }

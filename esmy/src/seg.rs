@@ -53,7 +53,7 @@ pub trait Feature: FeatureClone + Sync + Send {
     fn to_config(&self) -> FeatureConfig;
     fn as_any(&self) -> &Any;
     fn write_segment(&self, address: &FeatureAddress, docs: &[Doc]) -> Result<(), Error>;
-    fn reader<'a>(&self, address: &FeatureAddress) -> Box<FeatureReader>;
+    fn reader<'a>(&self, address: &FeatureAddress) -> Result<Box<FeatureReader>, Error>;
     fn merge_segments(
         &self,
         old_segments: &[(FeatureAddress, SegmentInfo)],
@@ -88,10 +88,7 @@ impl Clone for Box<Feature> {
 pub struct FeatureMeta {
     #[serde(rename = "type")]
     ftype: String,
-    #[serde(
-        default = "no_config",
-        skip_serializing_if = "FeatureConfig::is_none"
-    )]
+    #[serde(default = "no_config", skip_serializing_if = "FeatureConfig::is_none")]
     config: FeatureConfig,
 }
 
@@ -282,14 +279,16 @@ pub fn merge(
                         },
                         i.clone(),
                     )
-                }).collect();
+                })
+                .collect();
             feature.merge_segments(
                 &old_addressses,
                 &FeatureAddress {
                     segment: new_address.clone(),
                     name: name.clone(),
                 },
-            )
+            )?;
+            Ok(())
         })?;
     let doc_count: u64 = infos.iter().map(|i| i.doc_count).sum();
     let mut feature_metas = HashMap::new();
@@ -317,22 +316,18 @@ pub struct SegmentReader {
 }
 
 impl SegmentReader {
-    pub fn new(info: SegmentInfo) -> SegmentReader {
-        SegmentReader {
-            readers: info
-                .schema
-                .features
-                .iter()
-                .map(|(name, feature)| {
-                    (
-                        name.clone(),
-                        feature.reader(&FeatureAddress {
-                            segment: info.address.clone(),
-                            name: name.clone(),
-                        }),
-                    )
-                }).collect(),
+    pub fn open(info: SegmentInfo) -> Result<SegmentReader, Error> {
+        let mut feature_readers = HashMap::new();
+        for (name, feature) in info.schema.features.iter() {
+            let address = &FeatureAddress {
+                segment: info.address.clone(),
+                name: name.clone(),
+            };
+            feature_readers.insert(name.clone(), feature.reader(address)?);
         }
+        Ok(SegmentReader {
+            readers: feature_readers,
+        })
     }
 
     pub fn string_index(
@@ -346,6 +341,7 @@ impl SegmentReader {
                     if reader.feature.field_name == field_name
                         && analyzer.analyzer_type() == reader.feature.analyzer.analyzer_type()
                     {
+                        println!("Using reader: {:?}", reader.feature.field_name);
                         return Some(reader);
                     }
                 }

@@ -192,12 +192,32 @@ impl Index {
     pub fn add_doc(&self, doc: Doc) -> Result<(), Error> {
         //TODO long-term goal here is to add to some transaction log instead of just adding to in-memory
         {
-            let mut local_state = self.state.write().unwrap();
-            local_state.docs_to_index.push(doc);
-            if self.options.auto_commit && local_state.docs_to_index.len() >= 10_000 {
-                drop(local_state);
-                self.commit()?;
-            }
+            let should_commit = {
+                let mut local_state = self.state.write().unwrap();
+                local_state.docs_to_index.push(doc);
+                self.options.auto_merge && local_state.docs_to_index.len() >= 1_000
+            };
+            self.rayon_pool.install(|| -> Result<(), Error> {
+                let (commit_res, merge_res) = rayon::join(
+                    || {
+                        if should_commit {
+                            self.commit()
+                        } else {
+                            Ok(())
+                        }
+                    },
+                    || {
+                        if self.options.auto_merge {
+                            self.merge()
+                        } else {
+                            Ok(())
+                        }
+                    },
+                );
+                commit_res?;
+                merge_res?;
+                Ok(())
+            })?;
             Ok(())
         }
     }
@@ -208,8 +228,9 @@ impl Index {
                 let to_commit =
                     mem::replace(&mut self.state.write().unwrap().docs_to_index, Vec::new());
                 let chunk_size = ::std::cmp::max(to_commit.len(), to_commit.len() / 16);
-                to_commit.par_chunks(chunk_size).try_for_each(
-                    |chunk| -> Result<(), Error> {
+                to_commit
+                    .par_chunks(chunk_size)
+                    .try_for_each(|chunk| -> Result<(), Error> {
                         let address = new_segment_address(&self.path);
                         write_seg(&self.schema_template, &address, &chunk)?;
                         self.state.write().unwrap().active_segments.insert(
@@ -217,13 +238,9 @@ impl Index {
                             Arc::new(SegRef::new(address.read_info().unwrap())),
                         );
                         Ok(())
-                    },
-                )?;
+                    })?;
                 Ok(())
             })?;
-            if self.options.auto_merge {
-                self.submit_merges()?;
-            }
         }
         Ok(())
     }
@@ -231,11 +248,11 @@ impl Index {
     fn list_segments(path: &PathBuf) -> Vec<SegmentAddress> {
         let walker = WalkDir::new(path).min_depth(1).max_depth(1).into_iter();
         let entries = walker.filter_entry(|e| {
-            e.file_type().is_dir() || e
-                .file_name()
-                .to_str()
-                .map(|s| s.ends_with(".seg"))
-                .unwrap_or(false)
+            e.file_type().is_dir()
+                || e.file_name()
+                    .to_str()
+                    .map(|s| s.ends_with(".seg"))
+                    .unwrap_or(false)
         });
         entries
             .map(|e| {
@@ -252,7 +269,8 @@ impl Index {
                     path: PathBuf::from(path),
                     name,
                 }
-            }).collect::<Vec<SegmentAddress>>()
+            })
+            .collect::<Vec<SegmentAddress>>()
     }
 
     pub fn merge(&self) -> Result<(), Error> {
@@ -263,25 +281,26 @@ impl Index {
     }
 
     fn submit_merges(&self) -> Result<(), Error> {
-        let infos: Vec<SegmentInfo> = {
-            let local_state = &self.state.write().unwrap();
-            local_state
+        let to_merge = {
+            let mut local_state = self.state.write().unwrap();
+            let infos: Vec<SegmentInfo> = local_state
                 .active_segments
                 .values()
                 .filter(|info| !local_state.waiting_merge.contains(&info.info.address))
                 .map(|item| item.info.clone())
-                .collect()
-        };
-        find_merges(infos).to_merge.par_iter().try_for_each(
-            move |segments| -> Result<(), Error> {
-                let new_address = new_segment_address(&self.path);
-                {
-                    //TODO error handling
-                    let mut local_state = self.state.write().unwrap();
-                    for seg in segments.iter() {
-                        local_state.waiting_merge.insert(seg.address.clone());
-                    }
+                .collect();
+            let to_merge = find_merges(infos).to_merge;
+            for stage in &to_merge {
+                for seg in stage {
+                    local_state.waiting_merge.insert(seg.address.clone());
                 }
+            }
+            to_merge
+        };
+        to_merge
+            .par_iter()
+            .try_for_each(move |segments| -> Result<(), Error> {
+                let new_address = new_segment_address(&self.path);
                 println!(
                     "Merging {} segments with {} docs.",
                     segments.len(),
@@ -300,24 +319,28 @@ impl Index {
                     }
                     local_state.waiting_merge.remove(old_segment);
                 }
+                println!(
+                    "Merged {} segments with {} docs.",
+                    segments.len(),
+                    segments.iter().map(|i| i.doc_count).sum::<u64>()
+                );
                 let new_info = Arc::new(SegRef::new(new_address.read_info().unwrap()));
                 local_state.active_segments.insert(new_address, new_info);
                 Ok(())
-            },
-        )?;
+            })?;
         Ok(())
     }
 
-    pub fn open_reader(&self) -> ManagedIndexReader {
+    pub fn open_reader(&self) -> Result<ManagedIndexReader, Error> {
         let guard = self.state.read().unwrap();
         let mut readers = Vec::new();
         for seg_ref in guard.active_segments.values() {
-            readers.push(SegmentReader::new(seg_ref.info.clone()));
+            readers.push(SegmentReader::open(seg_ref.info.clone())?);
         }
-        ManagedIndexReader {
+        Ok(ManagedIndexReader {
             _segment_refs: guard.active_segments.values().cloned().collect(),
             readers,
-        }
+        })
     }
 }
 
@@ -352,12 +375,15 @@ fn find_merges(mut segments_in: Vec<SegmentInfo>) -> MergeSpec {
         let mut stage = Vec::new();
         loop {
             if !queue.is_empty() {
-                let should_drop = {
+                let is_in_stage = {
                     let info = queue.front().unwrap();
                     info.doc_count as f64 > first.doc_count as f64 * 0.6
                 };
-                if should_drop {
-                    stage.push(queue.pop_front().unwrap())
+                if is_in_stage {
+                    stage.push(queue.pop_front().unwrap());
+                    if stage.len() >= 5 {
+                        break;
+                    }
                 } else {
                     break;
                 }
@@ -365,7 +391,7 @@ fn find_merges(mut segments_in: Vec<SegmentInfo>) -> MergeSpec {
                 break;
             }
         }
-        if stage.len() > 10 {
+        if stage.len() >= 3 {
             to_merge.push(stage);
         }
     }

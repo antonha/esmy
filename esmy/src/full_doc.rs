@@ -61,10 +61,10 @@ impl Feature for FullDoc {
         Ok(())
     }
 
-    fn reader<'b>(&self, address: &FeatureAddress) -> Box<FeatureReader> {
-        Box::new(FullDocReader {
+    fn reader<'b>(&self, address: &FeatureAddress) -> Result<Box<FeatureReader>, Error> {
+        Ok(Box::new(FullDocReader {
             address: address.clone(),
-        })
+        }))
     }
 
     fn merge_segments(

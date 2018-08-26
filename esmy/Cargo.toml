@@ -17,4 +17,3 @@ rmp-serde = "0.13"
 unicode-segmentation = "1.2.0"
 threadpool = "1.0"
 afsort = "0.3.0"
-
