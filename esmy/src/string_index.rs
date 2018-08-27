@@ -108,21 +108,6 @@ impl Feature for StringIndex {
     }
 
     fn write_segment(&self, address: &FeatureAddress, docs: &[Doc]) -> Result<(), Error> {
-        /*
-        let memory_indices_results : Vec<Result<(u64, Map, Cursor<Vec<u8>>), Error>> = docs.par_chunks(500_usize).map(|doc_chunk| -> Result<(u64, Map, Cursor<Vec<u8>>), Error>{
-            let term_map = self.docs_to_term_map(doc_chunk);
-            let mut target_terms_buffer : Vec<u8> = Vec::new();
-            let mut target_posting : Vec<u8> = Vec::new();
-            {
-                let target_terms = MapBuilder::new(&mut target_terms_buffer)?;
-                write_term_map(term_map, target_terms, &mut target_posting)?;
-            }
-            Ok((doc_chunk.len() as u64, Map::from_bytes(target_terms_buffer)?, Cursor::new(target_posting)))
-        }).collect();
-        let mut memory_indices : Vec<(u64, Map, Cursor<Vec<u8>>)> = Vec::with_capacity(memory_indices_results.len());
-        for res in memory_indices_results {
-            memory_indices.push(res?);
-        }*/
         let terms = self.docs_to_term_map(docs);
         if terms.len() > 0 {
             let fst_writer = BufWriter::new(File::create(address.with_ending(TERM_ID_LISTING))?);
@@ -130,7 +115,6 @@ impl Feature for StringIndex {
                 BufWriter::new(File::create(address.with_ending(ID_DOC_LISTING))?);
             let target_terms = MapBuilder::new(fst_writer)?;
             write_term_map(terms, target_terms, target_postings)?;
-            //do_merge(&mut memory_indices, (fst_builder, iddoc))
         }
         Ok(())
     }
