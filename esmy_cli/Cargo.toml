@@ -7,9 +7,10 @@ authors = ["Anton Hägerstrand <anton.hagerstrand@gmail.com>"]
 esmy = { version = "0.1.0", path = "../esmy" }
 rayon = "1"
 time = "0.1"
-clap = "2"
+docopt = "1"
 serde = "1.0"
 serde_json = "1.0"
+serde_derive = "1.0"
 
 [[bin]]
 name = "esmy"

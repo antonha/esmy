@@ -88,7 +88,10 @@ impl Clone for Box<Feature> {
 pub struct FeatureMeta {
     #[serde(rename = "type")]
     ftype: String,
-    #[serde(default = "no_config", skip_serializing_if = "FeatureConfig::is_none")]
+    #[serde(
+        default = "no_config",
+        skip_serializing_if = "FeatureConfig::is_none"
+    )]
     config: FeatureConfig,
 }
 
@@ -279,8 +282,7 @@ pub fn merge(
                         },
                         i.clone(),
                     )
-                })
-                .collect();
+                }).collect();
             feature.merge_segments(
                 &old_addressses,
                 &FeatureAddress {
@@ -341,7 +343,6 @@ impl SegmentReader {
                     if reader.feature.field_name == field_name
                         && analyzer.analyzer_type() == reader.feature.analyzer.analyzer_type()
                     {
-                        println!("Using reader: {:?}", reader.feature.field_name);
                         return Some(reader);
                     }
                 }

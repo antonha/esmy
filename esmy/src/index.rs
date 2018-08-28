@@ -248,11 +248,11 @@ impl Index {
     fn list_segments(path: &PathBuf) -> Vec<SegmentAddress> {
         let walker = WalkDir::new(path).min_depth(1).max_depth(1).into_iter();
         let entries = walker.filter_entry(|e| {
-            e.file_type().is_dir()
-                || e.file_name()
-                    .to_str()
-                    .map(|s| s.ends_with(".seg"))
-                    .unwrap_or(false)
+            e.file_type().is_dir() || e
+                .file_name()
+                .to_str()
+                .map(|s| s.ends_with(".seg"))
+                .unwrap_or(false)
         });
         entries
             .map(|e| {
@@ -269,8 +269,7 @@ impl Index {
                     path: PathBuf::from(path),
                     name,
                 }
-            })
-            .collect::<Vec<SegmentAddress>>()
+            }).collect::<Vec<SegmentAddress>>()
     }
 
     pub fn merge(&self) -> Result<(), Error> {
@@ -301,11 +300,6 @@ impl Index {
             .par_iter()
             .try_for_each(move |segments| -> Result<(), Error> {
                 let new_address = new_segment_address(&self.path);
-                println!(
-                    "Merging {} segments with {} docs.",
-                    segments.len(),
-                    segments.iter().map(|i| i.doc_count).sum::<u64>()
-                );
                 let seg_cloned: Vec<SegmentAddress> =
                     segments.iter().map(|info| info.address.clone()).collect();
                 let addresses_to_merge: Vec<&SegmentAddress> =
@@ -319,11 +313,6 @@ impl Index {
                     }
                     local_state.waiting_merge.remove(old_segment);
                 }
-                println!(
-                    "Merged {} segments with {} docs.",
-                    segments.len(),
-                    segments.iter().map(|i| i.doc_count).sum::<u64>()
-                );
                 let new_info = Arc::new(SegRef::new(new_address.read_info().unwrap()));
                 local_state.active_segments.insert(new_address, new_info);
                 Ok(())

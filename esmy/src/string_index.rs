@@ -63,8 +63,7 @@ impl StringIndex {
                     };
                 }
                 doc_terms
-            })
-            .collect();
+            }).collect();
         afsort::sort_unstable_by(&mut terms, |t| &t.0);
         terms
     }
