@@ -96,7 +96,7 @@ mod tests {
 
     proptest! {
 
-        #![proptest_config(Config::with_cases(1_000))]
+        #![proptest_config(Config::with_cases(10_000))]
         #[test]
         fn finds_merged((ref ops, ref queries) in op_and_queries()) {
             let index_path = env::current_dir().expect("failed to get current dir").join(&Path::new("tmp/tests/index"));

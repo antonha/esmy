@@ -222,15 +222,15 @@ pub fn write_seg(
     if docs.is_empty() {
         return Ok(());
     }
-    &schema.features.par_iter().try_for_each(|(name, feature)| {
+    for (name, feature) in &schema.features {
         feature.write_segment(
             &FeatureAddress {
                 segment: address.clone(),
                 name: name.clone(),
             },
-            docs,
-        )
-    })?;
+            docs
+        )?;
+    }
     let feature_metas = schema_to_feature_metas(&schema);
     let segment_meta = SegmentMeta {
         feature_metas,

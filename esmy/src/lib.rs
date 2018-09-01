@@ -6,7 +6,12 @@ extern crate threadpool;
 extern crate unicode_segmentation;
 extern crate walkdir;
 
+extern crate num_cpus;
+extern crate core_affinity;
 extern crate rayon;
+
+extern crate crossbeam_channel;
+
 extern crate rmp_serde as rmps;
 extern crate serde;
 

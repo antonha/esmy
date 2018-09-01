@@ -1,5 +1,9 @@
 use super::Error;
+use crossbeam_channel;
+use crossbeam_channel::Receiver;
+use crossbeam_channel::Sender;
 use doc::Doc;
+use num_cpus;
 use rand;
 use rand::Rng;
 use rayon;
@@ -12,6 +16,7 @@ use seg::SegmentSchema;
 use seg::{SegmentAddress, SegmentInfo, SegmentReader};
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::fs;
 use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::mem;
@@ -22,21 +27,6 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::sync::RwLock;
 use walkdir::WalkDir;
-
-pub struct Index {
-    options: IndexOptions,
-    schema_template: SegmentSchema,
-    path: PathBuf,
-    state: Arc<RwLock<IndexState>>,
-    //pool: ThreadPool,
-    rayon_pool: rayon::ThreadPool,
-}
-
-struct IndexState {
-    pub docs_to_index: Vec<Doc>,
-    pub active_segments: HashMap<SegmentAddress, Arc<SegRef>>,
-    pub waiting_merge: HashSet<SegmentAddress>,
-}
 
 pub struct SegRef {
     info: SegmentInfo,
@@ -81,6 +71,7 @@ impl Drop for SegRef {
     }
 }
 
+#[derive(Clone)]
 struct IndexOptions {
     auto_commit: bool,
     auto_merge: bool,
@@ -134,189 +125,235 @@ pub fn write_index_meta(path: &Path, meta: &IndexMeta) -> Result<(), Error> {
     Ok(rmps::encode::write(&mut file, meta)?)
 }
 
+pub struct Index {
+    indexer: Arc<Indexer>,
+}
+
 impl Index {
     pub fn open(path: PathBuf) -> Result<Index, Error> {
         IndexBuilder::new().open(path)
     }
 
     fn open_with_options(path: PathBuf, options: IndexOptions) -> Result<Index, Error> {
-        let mut segments = HashMap::new();
-        for segment_address in Index::list_segments(&path) {
-            segments.insert(
-                segment_address.clone(),
-                Arc::from(SegRef::new(segment_address.read_info()?)),
-            );
-        }
         let schema = seg::schema_from_metas(read_index_meta(&path).unwrap().feature_template_metas);
         Ok(Index {
-            options,
-            schema_template: schema,
-            path,
-            state: Arc::new(RwLock::new(IndexState {
-                docs_to_index: Vec::new(),
-                active_segments: segments,
-                waiting_merge: HashSet::new(),
-            })),
-            rayon_pool: rayon::ThreadPoolBuilder::new()
-                .thread_name(|i| format!("esmy-indexing-{}", i))
-                .build()?,
+            indexer: Indexer::start(path, schema, options)?,
         })
     }
 
     fn create_with_options(
         path: PathBuf,
-        schema_template: SegmentSchema,
+        schema: SegmentSchema,
         options: IndexOptions,
     ) -> Result<Index, Error> {
+        fs::create_dir_all(&path)?;
         write_index_meta(
             &path,
             &IndexMeta {
-                feature_template_metas: seg::schema_to_feature_metas(&schema_template),
+                feature_template_metas: seg::schema_to_feature_metas(&schema),
             },
         )?;
         Ok(Index {
-            options,
-            schema_template,
-            path,
-            state: Arc::new(RwLock::new(IndexState {
-                docs_to_index: Vec::new(),
-                active_segments: HashMap::new(),
-                waiting_merge: HashSet::new(),
-            })),
-            rayon_pool: rayon::ThreadPoolBuilder::new()
-                .thread_name(|i| format!("esmy-indexing-{}", i))
-                .build()?,
+            indexer: Indexer::start(path, schema, options)?,
         })
     }
 
     pub fn add_doc(&self, doc: Doc) -> Result<(), Error> {
-        //TODO long-term goal here is to add to some transaction log instead of just adding to in-memory
-        {
-            let should_commit = {
-                let mut local_state = self.state.write().unwrap();
-                local_state.docs_to_index.push(doc);
-                self.options.auto_merge && local_state.docs_to_index.len() >= 1_000
-            };
-            self.rayon_pool.install(|| -> Result<(), Error> {
-                let (commit_res, merge_res) = rayon::join(
-                    || {
-                        if should_commit {
-                            self.commit()
-                        } else {
-                            Ok(())
-                        }
-                    },
-                    || {
-                        if self.options.auto_merge {
-                            self.merge()
-                        } else {
-                            Ok(())
-                        }
-                    },
-                );
-                commit_res?;
-                merge_res?;
-                Ok(())
-            })?;
-            Ok(())
-        }
+        self.indexer.add_doc(doc)
     }
 
     pub fn commit(&self) -> Result<(), Error> {
-        if !self.state.read().unwrap().docs_to_index.is_empty() {
-            self.rayon_pool.install(move || -> Result<(), Error> {
-                let to_commit =
-                    mem::replace(&mut self.state.write().unwrap().docs_to_index, Vec::new());
-                let chunk_size = ::std::cmp::max(to_commit.len(), to_commit.len() / 16);
-                to_commit
-                    .par_chunks(chunk_size)
-                    .try_for_each(|chunk| -> Result<(), Error> {
-                        let address = new_segment_address(&self.path);
-                        write_seg(&self.schema_template, &address, &chunk)?;
-                        self.state.write().unwrap().active_segments.insert(
-                            address.clone(),
-                            Arc::new(SegRef::new(address.read_info().unwrap())),
-                        );
-                        Ok(())
-                    })?;
-                Ok(())
-            })?;
+        Indexer::force_commit(self.indexer.clone())
+    }
+
+    pub fn merge(&self) -> Result<(), Error> {
+        Indexer::force_merge(self.indexer.clone())
+    }
+
+    pub fn open_reader(&self) -> Result<ManagedIndexReader, Error> {
+        self.indexer.open_reader()
+    }
+}
+
+struct Indexer {
+    path: PathBuf,
+    options: IndexOptions,
+    schema_template: SegmentSchema,
+    state: Arc<RwLock<IndexState>>,
+}
+
+impl Indexer {
+    fn start(
+        path: PathBuf,
+        schema_template: SegmentSchema,
+        options: IndexOptions,
+    ) -> Result<Arc<Self>, Error> {
+        let num_threads = num_cpus::get();
+        let (index_op_sender, index_op_receiver) =
+            crossbeam_channel::bounded::<IndexOp>(num_threads);
+        let state = Indexer::init_state(&path, index_op_sender)?;
+        let indexer = Arc::new(Indexer {
+            path: path.clone(),
+            options: options.clone(),
+            schema_template: schema_template,
+            state: state.clone(),
+        });
+        Indexer::start_indexing_thread(indexer.clone(), index_op_receiver);
+        Ok(indexer.clone())
+    }
+
+    fn init_state(
+        path: &Path,
+        index_op_sender: Sender<IndexOp>,
+    ) -> Result<Arc<RwLock<IndexState>>, Error> {
+        let mut segments = HashMap::new();
+        for segment_address in Self::segments_on_disk(&path)? {
+            segments.insert(
+                segment_address.clone(),
+                Arc::from(SegRef::new(segment_address.read_info()?)),
+            );
+        }
+        Ok(Arc::new(RwLock::new(IndexState {
+            docs_to_index: Vec::new(),
+            active_segments: segments,
+            index_op_sender,
+            waiting_merge: HashSet::new(),
+        })))
+    }
+
+    fn segments_on_disk(path: &Path) -> Result<Vec<SegmentAddress>, Error> {
+        let walker = WalkDir::new(path).min_depth(1).max_depth(1).into_iter();
+        let entries = walker.filter_entry(|e| {
+            e.file_type().is_dir()
+                || e.file_name()
+                    .to_str()
+                    .map(|s| s.ends_with(".seg"))
+                    .unwrap_or(false)
+        });
+        let mut addresses = Vec::new();
+        for entry_res in entries {
+            //TODO error handling
+            let entry = entry_res.unwrap();
+            let file_name = entry.file_name().to_str().unwrap();
+            let segment_name = file_name.split(".").next().unwrap();
+            addresses.push(SegmentAddress {
+                path: PathBuf::from(path),
+                name: segment_name.to_string(),
+            })
+        }
+        Ok(addresses)
+    }
+
+    fn start_indexing_thread(indexer: Arc<Indexer>, rec: Receiver<IndexOp>) {
+        rayon::spawn(move || {
+            rayon::scope(|s| {
+                for op in rec {
+                    match op {
+                        IndexOp::Commit(docs) => s.spawn(|_| indexer.do_commit(docs).unwrap()),
+                        IndexOp::Merge => s.spawn(|_| indexer.find_merges_and_merge().unwrap()),
+                    };
+                }
+            });
+        });
+    }
+
+    pub fn add_doc(&self, doc: Doc) -> Result<(), Error> {
+        //TODO long-term goal here is to add to some transaction log instead of just adding to in-memory
+        let mut local_state = self.state.write().unwrap();
+        local_state.docs_to_index.push(doc);
+        let should_commit = self.options.auto_commit && local_state.docs_to_index.len() >= 20_000;
+        if should_commit {
+            let docs = mem::replace(&mut local_state.docs_to_index, Vec::new());
+            local_state.index_op_sender.send(IndexOp::Commit(docs));
         }
         Ok(())
     }
 
-    fn list_segments(path: &PathBuf) -> Vec<SegmentAddress> {
-        let walker = WalkDir::new(path).min_depth(1).max_depth(1).into_iter();
-        let entries = walker.filter_entry(|e| {
-            e.file_type().is_dir() || e
-                .file_name()
-                .to_str()
-                .map(|s| s.ends_with(".seg"))
-                .unwrap_or(false)
-        });
-        entries
-            .map(|e| {
-                let name = String::from(
-                    e.unwrap()
-                        .file_name()
-                        .to_str()
-                        .unwrap()
-                        .split(".")
-                        .next()
-                        .unwrap(),
-                );
-                SegmentAddress {
-                    path: PathBuf::from(path),
-                    name,
-                }
-            }).collect::<Vec<SegmentAddress>>()
+    pub fn force_commit(indexer: Arc<Indexer>) -> Result<(), Error> {
+        let docs = mem::replace(
+            &mut indexer.state.write().unwrap().docs_to_index,
+            Vec::new(),
+        );
+        indexer.do_commit(docs)
     }
 
-    pub fn merge(&self) -> Result<(), Error> {
-        self.rayon_pool.install(|| -> Result<(), Error> {
-            self.submit_merges()?;
-            Ok(())
-        })
+    pub fn force_merge(indexer: Arc<Indexer>) -> Result<(), Error> {
+        indexer.find_merges_and_merge()
     }
 
-    fn submit_merges(&self) -> Result<(), Error> {
-        let to_merge = {
-            let mut local_state = self.state.write().unwrap();
-            let infos: Vec<SegmentInfo> = local_state
-                .active_segments
-                .values()
-                .filter(|info| !local_state.waiting_merge.contains(&info.info.address))
-                .map(|item| item.info.clone())
-                .collect();
-            let to_merge = find_merges(infos).to_merge;
-            for stage in &to_merge {
-                for seg in stage {
-                    local_state.waiting_merge.insert(seg.address.clone());
-                }
-            }
-            to_merge
-        };
-        to_merge
-            .par_iter()
-            .try_for_each(move |segments| -> Result<(), Error> {
-                let new_address = new_segment_address(&self.path);
-                let seg_cloned: Vec<SegmentAddress> =
-                    segments.iter().map(|info| info.address.clone()).collect();
-                let addresses_to_merge: Vec<&SegmentAddress> =
-                    seg_cloned.iter().map(|address| address).collect();
-                seg::merge(&self.schema_template, &new_address, &addresses_to_merge)?;
-                let mut local_state = self.state.write().unwrap();
-                for old_segment in seg_cloned.iter() {
-                    //TODO inefficient iteration
-                    if let Some(old_ref) = local_state.active_segments.remove(old_segment) {
-                        old_ref.delete_on_drop.store(true, atomic::Ordering::SeqCst)
-                    }
-                    local_state.waiting_merge.remove(old_segment);
-                }
-                let new_info = Arc::new(SegRef::new(new_address.read_info().unwrap()));
-                local_state.active_segments.insert(new_address, new_info);
-                Ok(())
+    fn do_commit(&self, docs: Vec<Doc>) -> Result<(), Error> {
+        if docs.is_empty() {
+            return Ok(());
+        }
+        if docs.len() <= 1000 {
+            self.try_commit(&docs)?;
+        } else {
+            docs.par_chunks(1000).try_for_each(|chunk| {
+                self.try_commit(&chunk)
             })?;
+        };
+        //self.try_commit(&docs);
+        if self.options.auto_merge {
+            self.state
+                .read()
+                .unwrap()
+                .index_op_sender
+                .send(IndexOp::Merge);
+        }
+        Ok(())
+    }
+
+    fn try_commit(&self, chunk: &[Doc]) -> Result<(), Error> {
+        let address = new_segment_address(&self.path);
+        write_seg(&self.schema_template, &address, &chunk)?;
+        self.state.write().unwrap().active_segments.insert(
+            address.clone(),
+            Arc::new(SegRef::new(address.read_info().unwrap())),
+        );
+        Ok(())
+    }
+
+    fn find_merges_and_merge(&self) -> Result<(), Error> {
+        self.items_to_merge()
+            .par_iter()
+            .try_for_each(move |segments| self.try_merge(&segments))?;
+        Ok(())
+    }
+
+    fn items_to_merge(&self) -> Vec<Vec<SegmentInfo>> {
+        let mut local_state = self.state.write().unwrap();
+        let infos: Vec<SegmentInfo> = local_state
+            .active_segments
+            .values()
+            .filter(|info| !local_state.waiting_merge.contains(&info.info.address))
+            .map(|item| item.info.clone())
+            .collect();
+        let to_merge = find_merges(infos).to_merge;
+        for stage in &to_merge {
+            for seg in stage {
+                local_state.waiting_merge.insert(seg.address.clone());
+            }
+        }
+        to_merge
+    }
+
+    fn try_merge(&self, segments: &[SegmentInfo]) -> Result<(), Error> {
+        let new_address = new_segment_address(&self.path);
+        let seg_cloned: Vec<SegmentAddress> =
+            segments.iter().map(|info| info.address.clone()).collect();
+        let addresses_to_merge: Vec<&SegmentAddress> =
+            seg_cloned.iter().map(|address| address).collect();
+        seg::merge(&self.schema_template, &new_address, &addresses_to_merge)?;
+        let mut local_state = self.state.write().unwrap();
+        for old_segment in seg_cloned.iter() {
+            //TODO inefficient iteration
+            if let Some(old_ref) = local_state.active_segments.remove(old_segment) {
+                old_ref.delete_on_drop.store(true, atomic::Ordering::SeqCst)
+            }
+            local_state.waiting_merge.remove(old_segment);
+        }
+        let new_info = Arc::new(SegRef::new(new_address.read_info().unwrap()));
+        local_state.active_segments.insert(new_address, new_info);
         Ok(())
     }
 
@@ -331,6 +368,19 @@ impl Index {
             readers,
         })
     }
+}
+
+#[derive(Debug)]
+enum IndexOp {
+    Commit(Vec<Doc>),
+    Merge,
+}
+
+struct IndexState {
+    docs_to_index: Vec<Doc>,
+    active_segments: HashMap<SegmentAddress, Arc<SegRef>>,
+    waiting_merge: HashSet<SegmentAddress>,
+    index_op_sender: Sender<IndexOp>,
 }
 
 fn new_segment_address(path: &Path) -> SegmentAddress {
