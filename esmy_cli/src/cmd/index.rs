@@ -3,6 +3,7 @@ use esmy::doc::Doc;
 use esmy::index::IndexBuilder;
 use esmy::Error;
 use serde_json;
+use std::fs::File;
 use std::io;
 use std::io::BufReader;
 use std::path::PathBuf;
@@ -19,6 +20,7 @@ Usage:
 
 Options::
     -p, --path <path>    Path to index to
+    -f, --file <path>   File to index from 
     -h, --help          Show this message
 "
 );
@@ -26,6 +28,7 @@ Options::
 #[derive(Deserialize)]
 struct Args {
     flag_path: String,
+    flag_file: Option<String>,
 }
 
 pub fn run(argv: &[&str]) -> Result<(), Error> {
@@ -33,15 +36,31 @@ pub fn run(argv: &[&str]) -> Result<(), Error> {
         .and_then(|d| d.argv(argv.iter().map(|&x| x)).deserialize())
         .unwrap_or_else(|e| e.exit());
     let index_path = PathBuf::from(args.flag_path);
-    let index_manager = IndexBuilder::new().open(index_path.clone())?;
-    let (sender, receiver) = mpsc::sync_channel(100_000);
-    thread::spawn(move || {
-        let stream =
-            serde_json::Deserializer::from_reader(BufReader::new(io::stdin())).into_iter::<Doc>();
-        for doc in stream {
-            sender.send(doc).unwrap();
-        }
-    });
+    let index_manager = IndexBuilder::new()
+        .open(::std::fs::canonicalize(index_path.clone()).unwrap())?;
+    let (sender, receiver) = mpsc::sync_channel(100);
+    let flag_file = args.flag_file.clone();
+    thread::Builder::new()
+        .name("esmy-reader-thread-1".to_owned())
+        .spawn(move || -> Result<(), Error> {
+            match flag_file {
+                Some(file) => {
+                    let stream = serde_json::Deserializer::from_reader(BufReader::new(File::open(file)?)).into_iter::<Doc>();
+                    for doc in stream {
+                        sender.send(doc).unwrap();
+                    }
+                    Ok(())
+                }
+                None => {
+                    let stream = serde_json::Deserializer::from_reader(BufReader::new(io::stdin())).into_iter::<Doc>();
+                    for doc in stream {
+                        sender.send(doc).unwrap();
+                    }
+                    Ok(())
+                }
+            }
+        })
+        .unwrap();
 
     for doc in receiver {
         index_manager.add_doc(doc.unwrap())?;
