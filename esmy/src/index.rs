@@ -169,7 +169,7 @@ impl Index {
     pub fn merge(&self) -> Result<(), Error> {
         Indexer::force_merge(self.indexer.clone())
     }
-    
+
     pub fn flush(&self) -> Result<(), Error> {
         self.indexer.flush()
     }
@@ -228,11 +228,11 @@ impl Indexer {
     fn segments_on_disk(path: &Path) -> Result<Vec<SegmentAddress>, Error> {
         let walker = WalkDir::new(path).min_depth(1).max_depth(1).into_iter();
         let entries = walker.filter_entry(|e| {
-            e.file_type().is_dir()
-                || e.file_name()
-                    .to_str()
-                    .map(|s| s.ends_with(".seg"))
-                    .unwrap_or(false)
+            e.file_type().is_dir() || e
+                .file_name()
+                .to_str()
+                .map(|s| s.ends_with(".seg"))
+                .unwrap_or(false)
         });
         let mut addresses = Vec::new();
         for entry_res in entries {
@@ -250,23 +250,23 @@ impl Indexer {
 
     fn start_indexing_thread(indexer: Arc<Indexer>, rec: Receiver<IndexOp>) {
         rayon::spawn(move || {
-            let mut send_on_flush : Vec<Sender<Result<(), Error>>> = Vec::new();
+            let mut send_on_flush: Vec<Sender<Result<(), Error>>> = Vec::new();
             rayon::scope(|s| {
                 for op in rec {
                     match op {
                         IndexOp::Commit(docs) => s.spawn(|_| indexer.do_commit(docs).unwrap()),
                         IndexOp::Merge => s.spawn(|_| indexer.find_merges_and_merge().unwrap()),
-                        IndexOp::Flush(sender) => send_on_flush.push(sender)
+                        IndexOp::Flush(sender) => send_on_flush.push(sender),
                     };
                 }
             });
-            for sender in send_on_flush{
+            for sender in send_on_flush {
                 sender.send(Ok(()))
             }
         });
     }
 
-    pub fn flush(&self) -> Result<(), Error>{
+    pub fn flush(&self) -> Result<(), Error> {
         let maybe_wait = {
             let mut local_state = self.state.write().unwrap();
 
@@ -281,7 +281,7 @@ impl Indexer {
         };
         match maybe_wait {
             Some(rec) => rec.recv().unwrap(),
-            None => Ok(())
+            None => Ok(()),
         }
     }
 
@@ -295,8 +295,8 @@ impl Indexer {
             match &local_state.index_op_sender {
                 Some(sender) => {
                     sender.send(IndexOp::Commit(docs));
-                } 
-                None => ()
+                }
+                None => (),
             };
         }
         Ok(())
@@ -321,9 +321,8 @@ impl Indexer {
         if docs.len() <= 1000 {
             self.try_commit(&docs)?;
         } else {
-            docs.par_chunks(1000).try_for_each(|chunk| {
-                self.try_commit(&chunk)
-            })?;
+            docs.par_chunks(1000)
+                .try_for_each(|chunk| self.try_commit(&chunk))?;
         };
         //self.try_commit(&docs);
         if self.options.auto_merge {
@@ -331,8 +330,8 @@ impl Indexer {
             match &local_state.index_op_sender {
                 Some(sender) => {
                     sender.send(IndexOp::Merge);
-                } 
-                None => ()
+                }
+                None => (),
             };
         }
         Ok(())
@@ -403,10 +402,9 @@ impl Indexer {
             readers,
         })
     }
-
 }
 
-impl Drop for Indexer{
+impl Drop for Indexer {
     fn drop(&mut self) {
         self.flush().unwrap();
     }
@@ -416,7 +414,7 @@ impl Drop for Indexer{
 enum IndexOp {
     Commit(Vec<Doc>),
     Merge,
-    Flush(Sender<Result<(), Error>>)
+    Flush(Sender<Result<(), Error>>),
 }
 
 struct IndexState {

@@ -228,7 +228,7 @@ pub fn write_seg(
                 segment: address.clone(),
                 name: name.clone(),
             },
-            docs
+            docs,
         )?;
     }
     let feature_metas = schema_to_feature_metas(&schema);

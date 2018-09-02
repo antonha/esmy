@@ -30,7 +30,7 @@ Options::
 struct Args {
     flag_path: String,
     flag_file: Option<String>,
-    flag_no_merge: bool
+    flag_no_merge: bool,
 }
 
 pub fn run(argv: &[&str]) -> Result<(), Error> {
@@ -48,22 +48,24 @@ pub fn run(argv: &[&str]) -> Result<(), Error> {
         .spawn(move || -> Result<(), Error> {
             match flag_file {
                 Some(file) => {
-                    let stream = serde_json::Deserializer::from_reader(BufReader::new(File::open(file)?)).into_iter::<Doc>();
+                    let stream =
+                        serde_json::Deserializer::from_reader(BufReader::new(File::open(file)?))
+                            .into_iter::<Doc>();
                     for doc in stream {
                         sender.send(doc).unwrap();
                     }
                     Ok(())
                 }
                 None => {
-                    let stream = serde_json::Deserializer::from_reader(BufReader::new(io::stdin())).into_iter::<Doc>();
+                    let stream = serde_json::Deserializer::from_reader(BufReader::new(io::stdin()))
+                        .into_iter::<Doc>();
                     for doc in stream {
                         sender.send(doc).unwrap();
                     }
                     Ok(())
                 }
             }
-        })
-        .unwrap();
+        }).unwrap();
 
     for doc in receiver {
         index_manager.add_doc(doc.unwrap())?;

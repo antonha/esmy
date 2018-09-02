@@ -6,8 +6,8 @@ extern crate threadpool;
 extern crate unicode_segmentation;
 extern crate walkdir;
 
-extern crate num_cpus;
 extern crate core_affinity;
+extern crate num_cpus;
 extern crate rayon;
 
 extern crate crossbeam_channel;
