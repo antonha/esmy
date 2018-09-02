@@ -19,8 +19,9 @@ Usage:
     esmy index --help
 
 Options::
-    -p, --path <path>    Path to index to
+    -p, --path <path>   Path to index to
     -f, --file <path>   File to index from 
+    --no-merge          Do not enable merges 
     -h, --help          Show this message
 "
 );
@@ -29,6 +30,7 @@ Options::
 struct Args {
     flag_path: String,
     flag_file: Option<String>,
+    flag_no_merge: bool
 }
 
 pub fn run(argv: &[&str]) -> Result<(), Error> {
@@ -37,6 +39,7 @@ pub fn run(argv: &[&str]) -> Result<(), Error> {
         .unwrap_or_else(|e| e.exit());
     let index_path = PathBuf::from(args.flag_path);
     let index_manager = IndexBuilder::new()
+        .auto_merge(!args.flag_no_merge)
         .open(::std::fs::canonicalize(index_path.clone()).unwrap())?;
     let (sender, receiver) = mpsc::sync_channel(100);
     let flag_file = args.flag_file.clone();
@@ -65,6 +68,6 @@ pub fn run(argv: &[&str]) -> Result<(), Error> {
     for doc in receiver {
         index_manager.add_doc(doc.unwrap())?;
     }
-    index_manager.commit()?;
+    index_manager.flush()?;
     Ok(())
 }

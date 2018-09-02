@@ -169,6 +169,10 @@ impl Index {
     pub fn merge(&self) -> Result<(), Error> {
         Indexer::force_merge(self.indexer.clone())
     }
+    
+    pub fn flush(&self) -> Result<(), Error> {
+        self.indexer.flush()
+    }
 
     pub fn open_reader(&self) -> Result<ManagedIndexReader, Error> {
         self.indexer.open_reader()
@@ -216,7 +220,7 @@ impl Indexer {
         Ok(Arc::new(RwLock::new(IndexState {
             docs_to_index: Vec::new(),
             active_segments: segments,
-            index_op_sender,
+            index_op_sender: Some(index_op_sender),
             waiting_merge: HashSet::new(),
         })))
     }
@@ -246,15 +250,39 @@ impl Indexer {
 
     fn start_indexing_thread(indexer: Arc<Indexer>, rec: Receiver<IndexOp>) {
         rayon::spawn(move || {
+            let mut send_on_flush : Vec<Sender<Result<(), Error>>> = Vec::new();
             rayon::scope(|s| {
                 for op in rec {
                     match op {
                         IndexOp::Commit(docs) => s.spawn(|_| indexer.do_commit(docs).unwrap()),
                         IndexOp::Merge => s.spawn(|_| indexer.find_merges_and_merge().unwrap()),
+                        IndexOp::Flush(sender) => send_on_flush.push(sender)
                     };
                 }
             });
+            for sender in send_on_flush{
+                sender.send(Ok(()))
+            }
         });
+    }
+
+    pub fn flush(&self) -> Result<(), Error>{
+        let maybe_wait = {
+            let mut local_state = self.state.write().unwrap();
+
+            if local_state.index_op_sender.is_some() {
+                let (s, r) = crossbeam_channel::bounded(10);
+                let sender = mem::replace(&mut local_state.index_op_sender, None).unwrap();
+                sender.send(IndexOp::Flush(s));
+                Some(r)
+            } else {
+                None
+            }
+        };
+        match maybe_wait {
+            Some(rec) => rec.recv().unwrap(),
+            None => Ok(())
+        }
     }
 
     pub fn add_doc(&self, doc: Doc) -> Result<(), Error> {
@@ -264,7 +292,12 @@ impl Indexer {
         let should_commit = self.options.auto_commit && local_state.docs_to_index.len() >= 20_000;
         if should_commit {
             let docs = mem::replace(&mut local_state.docs_to_index, Vec::new());
-            local_state.index_op_sender.send(IndexOp::Commit(docs));
+            match &local_state.index_op_sender {
+                Some(sender) => {
+                    sender.send(IndexOp::Commit(docs));
+                } 
+                None => ()
+            };
         }
         Ok(())
     }
@@ -294,11 +327,13 @@ impl Indexer {
         };
         //self.try_commit(&docs);
         if self.options.auto_merge {
-            self.state
-                .read()
-                .unwrap()
-                .index_op_sender
-                .send(IndexOp::Merge);
+            let local_state = self.state.read().unwrap();
+            match &local_state.index_op_sender {
+                Some(sender) => {
+                    sender.send(IndexOp::Merge);
+                } 
+                None => ()
+            };
         }
         Ok(())
     }
@@ -368,19 +403,27 @@ impl Indexer {
             readers,
         })
     }
+
+}
+
+impl Drop for Indexer{
+    fn drop(&mut self) {
+        self.flush().unwrap();
+    }
 }
 
 #[derive(Debug)]
 enum IndexOp {
     Commit(Vec<Doc>),
     Merge,
+    Flush(Sender<Result<(), Error>>)
 }
 
 struct IndexState {
     docs_to_index: Vec<Doc>,
     active_segments: HashMap<SegmentAddress, Arc<SegRef>>,
     waiting_merge: HashSet<SegmentAddress>,
-    index_op_sender: Sender<IndexOp>,
+    index_op_sender: Option<Sender<IndexOp>>,
 }
 
 fn new_segment_address(path: &Path) -> SegmentAddress {
