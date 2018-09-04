@@ -1,4 +1,3 @@
-use afsort;
 use analyzis::Analyzer;
 use analyzis::NoopAnalyzer;
 use analyzis::UAX29Analyzer;
@@ -45,27 +44,51 @@ impl StringIndex {
 }
 
 impl StringIndex {
-    fn docs_to_term_map<'a>(&self, docs: &'a [Doc]) -> Vec<(Cow<'a, str>, u64)> {
+    fn write_docs<'a>(&self, address: &FeatureAddress, docs: &'a [Doc]) -> Result<(), Error> {
         let analyzer = &self.analyzer;
         let field_name = &self.field_name;
-        let mut terms: Vec<(Cow<'a, str>, u64)> = docs
-            .iter()
-            .enumerate()
-            .flat_map(|(doc_id, doc)| {
-                let mut doc_terms = Vec::new();
-                for (_name, val) in doc.iter().filter(|e| e.0 == field_name) {
-                    match *val {
-                        FieldValue::String(ref value) => {
-                            doc_terms.extend(
-                                analyzer.analyze(value).map(|token| (token, doc_id as u64)),
-                            );
+        let mut map: ::std::collections::BTreeMap<Cow<'a, str>, Vec<u64>> =
+            ::std::collections::BTreeMap::new();
+        for (doc_id, doc) in docs.iter().enumerate() {
+            for (_name, val) in doc.iter().filter(|e| e.0 == field_name) {
+                match *val {
+                    FieldValue::String(ref value) => {
+                        for token in analyzer.analyze(value) {
+                            match map.entry(token) {
+                                ::std::collections::btree_map::Entry::Vacant(vacant) => {
+                                    vacant.insert(vec![doc_id as u64]);
+                                }
+                                ::std::collections::btree_map::Entry::Occupied(mut occupied) => {
+                                    let term_docs = occupied.get_mut();
+                                    if *term_docs.last().unwrap() != doc_id as u64 {
+                                        term_docs.push(doc_id as u64)
+                                    }
+                                }
+                            }
                         }
-                    };
-                }
-                doc_terms
-            }).collect();
-        afsort::sort_unstable_by(&mut terms, |t| &t.0);
-        terms
+                    }
+                };
+            }
+        }
+        if map.is_empty() {
+            return Ok(());
+        }
+        let fst_writer = BufWriter::new(File::create(address.with_ending(TERM_ID_LISTING))?);
+        let mut target_terms = MapBuilder::new(fst_writer)?;
+        let mut target_postings = BufWriter::new(File::create(address.with_ending(ID_DOC_LISTING))?);
+        let mut offset = 0u64;
+        for (term, doc_ids) in map.iter() {
+            target_terms.insert(term.as_bytes(), offset)?;
+            offset += write_vint(&mut target_postings, doc_ids.len() as u64)? as u64;
+            let mut prev = 0u64;
+            for doc_id in doc_ids {
+                offset += write_vint(&mut target_postings, (*doc_id - prev) as u64)? as u64;
+                prev = *doc_id;
+            }
+        }
+        target_postings.flush()?;
+        target_terms.finish()?;
+        Ok(())
     }
 }
 
@@ -107,15 +130,7 @@ impl Feature for StringIndex {
     }
 
     fn write_segment(&self, address: &FeatureAddress, docs: &[Doc]) -> Result<(), Error> {
-        let terms = self.docs_to_term_map(docs);
-        if terms.len() > 0 {
-            let fst_writer = BufWriter::new(File::create(address.with_ending(TERM_ID_LISTING))?);
-            let target_postings =
-                BufWriter::new(File::create(address.with_ending(ID_DOC_LISTING))?);
-            let target_terms = MapBuilder::new(fst_writer)?;
-            write_term_map(terms, target_terms, target_postings)?;
-        }
-        Ok(())
+        self.write_docs(address, docs)
     }
 
     fn merge_segments(
@@ -187,6 +202,7 @@ impl StringIndexReader {
                 let num = read_vint(&mut iddoc)?;
                 Ok(Some(DocIter {
                     file: iddoc,
+                    last_doc_id: 0,
                     left: num,
                 }))
             }
@@ -203,6 +219,7 @@ impl StringIndexReader {
 
 pub struct DocIter {
     file: BufReader<File>,
+    last_doc_id: u64,
     left: u64,
 }
 
@@ -212,7 +229,10 @@ impl Iterator for DocIter {
         if self.left != 0 {
             self.left -= 1;
             Some(match read_vint(&mut self.file) {
-                Ok(doc) => Ok(doc),
+                Ok(diff) => {
+                    self.last_doc_id += diff;
+                    Ok(self.last_doc_id)
+                }
                 Err(e) => Err(Error::from(e)),
             })
         } else {
@@ -225,44 +245,6 @@ impl From<fst::Error> for Error {
     fn from(e: fst::Error) -> Self {
         return Error::Other(Box::new(e));
     }
-}
-
-fn write_term_map<W>(
-    terms: Vec<(Cow<str>, u64)>,
-    mut target_terms: MapBuilder<W>,
-    mut target_postings: W,
-) -> Result<(), Error>
-where
-    W: Write + Sized,
-{
-    if terms.is_empty() {
-        return Ok(());
-    }
-
-    let mut offset: u64 = 0;
-
-    let mut ids = Vec::new();
-    let mut last_term = &terms[0].0;
-    for &(ref term, id) in terms.iter() {
-        if term != last_term {
-            target_terms.insert(&last_term.as_bytes(), offset)?;
-            offset += write_vint(&mut target_postings, ids.len() as u64)? as u64;
-            for id in ids.iter() {
-                offset += write_vint(&mut target_postings, *id)? as u64;
-            }
-            ids.clear();
-        }
-        ids.push(id);
-        last_term = term;
-    }
-    target_terms.insert(&last_term.as_bytes(), offset)?;
-    offset += write_vint(&mut target_postings, ids.len() as u64)? as u64;
-    for id in ids.iter() {
-        offset += write_vint(&mut target_postings, *id)? as u64;
-    }
-    target_terms.finish()?;
-    target_postings.flush()?;
-    Ok(())
 }
 
 fn do_merge<R, W>(sources: &mut [(u64, Map, R)], target: (MapBuilder<W>, W)) -> Result<(), Error>
@@ -299,14 +281,17 @@ where
 
         let term_doc_count: u64 = term_doc_counts.iter().sum();
         offset += write_vint(&mut target_postings, term_doc_count)? as u64;
+        let mut last_doc_id = 0u64;
         for term_offset in term_offsets {
             let mut source_posting = source_postings.get_mut(term_offset.index).unwrap();
+            let mut doc_id = 0;
             for _i in 0..term_doc_counts[term_offset.index] {
-                let doc_id = read_vint(&mut source_posting)?;
+                doc_id += read_vint(&mut source_posting)?;
                 offset += write_vint(
                     &mut target_postings,
-                    new_offsets[term_offset.index] + doc_id,
+                    new_offsets[term_offset.index] + (doc_id - last_doc_id),
                 )? as u64;
+                last_doc_id = doc_id;
             }
         }
     }
