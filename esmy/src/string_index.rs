@@ -75,7 +75,8 @@ impl StringIndex {
         }
         let fst_writer = BufWriter::new(File::create(address.with_ending(TERM_ID_LISTING))?);
         let mut target_terms = MapBuilder::new(fst_writer)?;
-        let mut target_postings = BufWriter::new(File::create(address.with_ending(ID_DOC_LISTING))?);
+        let mut target_postings =
+            BufWriter::new(File::create(address.with_ending(ID_DOC_LISTING))?);
         let mut offset = 0u64;
         for (term, doc_ids) in map.iter() {
             target_terms.insert(term.as_bytes(), offset)?;
