@@ -83,6 +83,7 @@ impl StringIndex {
             offset += write_vint(&mut target_postings, doc_ids.len() as u64)? as u64;
             let mut prev = 0u64;
             for doc_id in doc_ids {
+                let diff = (*doc_id - prev) as u64;
                 offset += write_vint(&mut target_postings, (*doc_id - prev) as u64)? as u64;
                 prev = *doc_id;
             }
@@ -271,10 +272,12 @@ where
 
     let mut offset = 0u64;
     while let Some((term, term_offsets)) = union.next() {
+        let mut sorted_offsets = term_offsets.to_vec();
+        sorted_offsets.sort_by_key(|o| o.index);
         term_builder.insert(term, offset)?;
 
         let mut term_doc_counts: Vec<u64> = vec![0; source_postings.len()];
-        for term_offset in term_offsets {
+        for term_offset in &sorted_offsets {
             let mut source_posting = source_postings.get_mut(term_offset.index).unwrap();
             source_posting.seek(SeekFrom::Start(term_offset.value as u64))?;
             term_doc_counts[term_offset.index] = read_vint(&mut source_posting)?;
@@ -282,17 +285,18 @@ where
 
         let term_doc_count: u64 = term_doc_counts.iter().sum();
         offset += write_vint(&mut target_postings, term_doc_count)? as u64;
-        let mut last_doc_id = 0u64;
-        for term_offset in term_offsets {
+        let mut last_written_doc_id = 0u64;
+        for term_offset in &sorted_offsets {
             let mut source_posting = source_postings.get_mut(term_offset.index).unwrap();
-            let mut doc_id = 0;
+            let mut last_read_doc_id = 0u64;
             for _i in 0..term_doc_counts[term_offset.index] {
-                doc_id += read_vint(&mut source_posting)?;
-                offset += write_vint(
-                    &mut target_postings,
-                    new_offsets[term_offset.index] + (doc_id - last_doc_id),
-                )? as u64;
-                last_doc_id = doc_id;
+                let diff = read_vint(&mut source_posting)?;
+                let read_doc_id = last_read_doc_id + diff;
+                let doc_id_to_write = new_offsets[term_offset.index] + read_doc_id;
+                let diff_to_write = doc_id_to_write - last_written_doc_id;
+                offset += write_vint(&mut target_postings, diff_to_write)? as u64;
+                last_read_doc_id = read_doc_id;
+                last_written_doc_id = doc_id_to_write;
             }
         }
     }
