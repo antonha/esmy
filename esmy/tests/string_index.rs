@@ -8,13 +8,17 @@ extern crate proptest;
 extern crate tempfile;
 
 #[cfg(test)]
+extern crate rayon;
+
+#[cfg(test)]
 mod tests {
     use esmy::analyzis::NoopAnalyzer;
     use esmy::doc::Doc;
     use esmy::doc::FieldValue;
     use esmy::full_doc::FullDoc;
+    use esmy::index::Index;
     use esmy::index::IndexBuilder;
-    use esmy::search::{search, AllDocsCollector, FullDocQuery, ValueQuery};
+    use esmy::search::{search, AllDocsCollector, FullDocQuery, SegmentQuery, ValueQuery};
     use esmy::seg::Feature;
     use esmy::seg::SegmentSchema;
     use esmy::string_index::StringIndex;
@@ -22,10 +26,10 @@ mod tests {
     use proptest::collection::vec;
     use proptest::prelude::*;
     use proptest::test_runner::Config;
+    use rayon::prelude::*;
     use std::collections::HashMap;
-    use std::env;
-    use std::fs;
-    use std::path::Path;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
 
     #[derive(Debug, Clone)]
     enum IndexOperation {
@@ -48,32 +52,34 @@ mod tests {
 
     fn arb_index_op() -> BoxedStrategy<IndexOperation> {
         prop_oneof![
-            vec(arb_doc(), 2000..2001).prop_map(IndexOperation::Index),
+            vec(arb_doc(), 20..5001).prop_map(IndexOperation::Index),
             Just(IndexOperation::Commit),
             Just(IndexOperation::Merge)
         ].boxed()
     }
 
-    fn query(vec: Vec<(String, String)>) -> BoxedStrategy<ValueQuery> {
+    fn value_query(vec: Vec<(String, String)>) -> BoxedStrategy<ValueQuery> {
         (0..vec.len())
             .prop_map(move |i| {
                 let (ref key, ref val) = vec[i];
                 ValueQuery::new(key.clone(), val.clone())
-            }).boxed()
+            })
+            .boxed()
     }
 
-    fn op_and_queries() -> BoxedStrategy<(Vec<IndexOperation>, Vec<ValueQuery>)> {
+    fn op_and_value_queries() -> BoxedStrategy<(Vec<IndexOperation>, Vec<ValueQuery>)> {
         vec(arb_index_op(), 1..100)
             .prop_flat_map(|ops| {
                 let values = extract_values(&ops);
                 if values.len() > 0 {
-                    vec(query(values.clone()), 0..100)
+                    vec(value_query(values.clone()), 0..100)
                         .prop_map(move |queries| (ops.clone(), queries))
                         .boxed()
                 } else {
                     Just((ops.clone(), Vec::new())).boxed()
                 }
-            }).boxed()
+            })
+            .boxed()
     }
 
     fn extract_values(ops: &[IndexOperation]) -> Vec<(String, String)> {
@@ -97,55 +103,50 @@ mod tests {
         values
     }
 
-    proptest! {
+    struct IndexTestState {
+        index: Index,
+        in_mem_docs: Vec<Doc>,
+        in_mem_seg_docs: Vec<Doc>,
+    }
 
-        #![proptest_config(Config::with_cases(10_000))]
-        #[test]
-        fn finds_merged((ref ops, ref queries) in op_and_queries()) {
-            let index_path = env::current_dir().expect("failed to get current dir").join(&Path::new("tmp/tests/index"));
-            if index_path.exists() {
-                fs::remove_dir_all(&index_path).expect("could not delete directory for test");
-            }
-            fs::create_dir_all(&index_path).expect("could create directory for test");
-            let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
-            features.insert("1".to_string(), Box::new(StringIndex::new("field1".to_string(), Box::from(NoopAnalyzer{}))));
-            features.insert("2".to_string(), Box::new(StringIndex::new("field2".to_string(), Box::from(NoopAnalyzer{}))));
-            features.insert("f".to_string(), Box::new(FullDoc::new()));
-            let schema = SegmentSchema {features};
-
-            let index_manager = IndexBuilder::new()
-                .auto_commit(false)
-                .auto_merge(false)
-                .create(index_path, schema).expect("Could not open index.");
-            let mut in_mem_docs = Vec::new();
-            let mut in_mem_seg_docs = Vec::new();
+    impl IndexTestState {
+        fn apply_ops(&mut self, ops: &[IndexOperation]) {
             for op in ops {
                 match op {
                     &IndexOperation::Index(ref docs) => {
-                        for doc in docs{
-                            index_manager.add_doc(doc.clone()).unwrap();
-                            in_mem_seg_docs.push(doc.clone());
+                        for doc in docs {
+                            self.index.add_doc(doc.clone()).unwrap();
+                            self.in_mem_seg_docs.push(doc.clone());
                         }
-                    },
+                    }
                     &IndexOperation::Commit => {
-                        index_manager.commit().expect("Could not commit segments.");
-                        in_mem_docs.append(&mut in_mem_seg_docs);
-                        in_mem_seg_docs = Vec::new();
-                    },
+                        self.index.commit().expect("Could not commit segments.");
+                        self.in_mem_docs.append(&mut self.in_mem_seg_docs);
+                        self.in_mem_seg_docs = Vec::new();
+                    }
                     &IndexOperation::Merge => {
-                        index_manager.merge().expect("Could not merge segments.");
+                        self.index.merge().expect("Could not merge segments.");
                     }
                 }
-                for query in queries {
-                    let expected_matches : Vec<Doc> = in_mem_docs.iter()
-                        .filter(|doc| query.matches(doc))
-                        .cloned()
-                        .collect();
-                    let mut collector = AllDocsCollector::new();
-                    search(&index_manager.open_reader().unwrap(), query, &mut collector).unwrap();
-                    assert_same_docs(&expected_matches, collector.docs());
-                }
             }
+        }
+
+        fn check_queries_match_same<Q>(&self, queries: &[ValueQuery])
+        where
+            Q: FullDocQuery + SegmentQuery + Send + Sized,
+        {
+            let reader = self.index.open_reader().unwrap();
+            queries.par_iter().for_each(|query| {
+                let expected_matches: Vec<Doc> = self
+                    .in_mem_docs
+                    .iter()
+                    .filter(|doc| query.matches(doc))
+                    .cloned()
+                    .collect();
+                let mut collector = AllDocsCollector::new();
+                search(&reader, query, &mut collector).unwrap();
+                assert_same_docs(&expected_matches, collector.docs());
+            });
         }
     }
 
@@ -158,4 +159,34 @@ mod tests {
             assert!(actual.contains(doc), "Actual = {} did not contain {}")
         }
     }
+
+    proptest! {
+        #![proptest_config(Config::with_cases(200))]
+        #[test]
+        fn finds_merged((ref ops, ref queries) in op_and_value_queries()) {
+            let index_dir = TempDir::new().unwrap();{
+            let index_path = PathBuf::from(index_dir.path());
+                let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
+                features.insert("1".to_string(), Box::new(StringIndex::new("field1".to_string(), Box::from(NoopAnalyzer{}))));
+                features.insert("2".to_string(), Box::new(StringIndex::new("field2".to_string(), Box::from(NoopAnalyzer{}))));
+                features.insert("f".to_string(), Box::new(FullDoc::new()));
+                let schema = SegmentSchema {features};
+
+                let index = IndexBuilder::new()
+                    .auto_commit(false)
+                    .auto_merge(false)
+                    .create(index_path, schema)
+                    .expect("Could not open index.");
+                let mut index_test_state = IndexTestState{
+                    index,
+                    in_mem_docs: Vec::new(),
+                    in_mem_seg_docs: Vec::new(),
+                };
+                index_test_state.apply_ops(ops);
+                index_test_state.check_queries_match_same::<ValueQuery>(queries);
+            }
+            index_dir.close().unwrap();
+        }
+    }
+
 }
