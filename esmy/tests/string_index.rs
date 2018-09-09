@@ -8,7 +8,18 @@ extern crate proptest;
 extern crate tempfile;
 
 #[cfg(test)]
+extern crate serde;
+extern crate serde_json;
+
+#[cfg(test)]
+extern crate flate2;
+
+#[cfg(test)]
 extern crate rayon;
+
+#[cfg(test)]
+#[macro_use]
+extern crate lazy_static;
 
 #[cfg(test)]
 mod tests {
@@ -22,7 +33,6 @@ mod tests {
     use esmy::seg::Feature;
     use esmy::seg::SegmentSchema;
     use esmy::string_index::StringIndex;
-    use proptest::collection::hash_map;
     use proptest::collection::vec;
     use proptest::prelude::*;
     use proptest::test_runner::Config;
@@ -30,6 +40,20 @@ mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
     use tempfile::TempDir;
+    use serde_json;
+    use flate2;
+
+
+    static COMPRESSED_JSON_WIKI_DOCS: &[u8] = include_bytes!("50k_wiki_docs.json.gz");
+    lazy_static! {
+        static ref WIKI_DOCS: Vec<Doc> = {
+            let compressed = flate2::read::GzDecoder::new(COMPRESSED_JSON_WIKI_DOCS);
+            serde_json::Deserializer::from_reader(compressed)
+                .into_iter::<Doc>()
+                .map(|r|r.unwrap())
+                .collect()
+        };
+    }
 
     #[derive(Debug, Clone)]
     enum IndexOperation {
@@ -38,41 +62,35 @@ mod tests {
         Merge,
     }
 
-    fn arb_fieldvalue() -> BoxedStrategy<FieldValue> {
-        "[a-z]+".prop_map(FieldValue::String).boxed()
-    }
-
-    fn arb_fieldname() -> BoxedStrategy<String> {
-        prop_oneof![Just("field1".to_owned()), Just("field2".to_owned())].boxed()
-    }
-
     fn arb_doc() -> BoxedStrategy<Doc> {
-        hash_map(arb_fieldname(), arb_fieldvalue(), 1..2).boxed()
+        (0..WIKI_DOCS.len())
+            .prop_map(|i|WIKI_DOCS[i].clone())
+            .boxed()
     }
 
     fn arb_index_op() -> BoxedStrategy<IndexOperation> {
         prop_oneof![
-            vec(arb_doc(), 20..5001).prop_map(IndexOperation::Index),
+            vec(arb_doc(), 2..50).prop_map(IndexOperation::Index),
             Just(IndexOperation::Commit),
             Just(IndexOperation::Merge)
         ].boxed()
     }
 
-    fn value_query(vec: Vec<(String, String)>) -> BoxedStrategy<ValueQuery> {
+    fn value_query(field_name: String, vec: Vec<String>) -> BoxedStrategy<ValueQuery> {
         (0..vec.len())
             .prop_map(move |i| {
-                let (ref key, ref val) = vec[i];
-                ValueQuery::new(key.clone(), val.clone())
+                let val = &vec[i];
+                ValueQuery::new(field_name.to_owned(), val.clone())
             })
             .boxed()
     }
 
     fn op_and_value_queries() -> BoxedStrategy<(Vec<IndexOperation>, Vec<ValueQuery>)> {
-        vec(arb_index_op(), 1..100)
+        vec(arb_index_op(), 1..10)
             .prop_flat_map(|ops| {
-                let values = extract_values(&ops);
+                let values = extract_values(&ops, &"body");
                 if values.len() > 0 {
-                    vec(value_query(values.clone()), 0..100)
+                    vec(value_query("body".to_owned(), values.clone()), 0..100)
                         .prop_map(move |queries| (ops.clone(), queries))
                         .boxed()
                 } else {
@@ -82,18 +100,21 @@ mod tests {
             .boxed()
     }
 
-    fn extract_values(ops: &[IndexOperation]) -> Vec<(String, String)> {
-        let mut values: Vec<(String, String)> = Vec::new();
+    fn extract_values(ops: &[IndexOperation], field_name: &str) -> Vec<String> {
+        let mut values: Vec<String> = Vec::new();
         for op in ops {
             match op {
                 IndexOperation::Index(docs) => {
                     for doc in docs {
-                        for (name, value) in doc {
-                            match value {
-                                FieldValue::String(str_val) => {
-                                    values.push((name.clone(), str_val.clone()));
+                        match doc.get(field_name) {
+                            Some(val) => {
+                                match val {
+                                    FieldValue::String(str_val) =>  {
+                                        values.push(str_val.clone());
+                                    }
                                 }
-                            }
+                            },
+                            None => ()
                         }
                     }
                 }
@@ -167,8 +188,7 @@ mod tests {
             let index_dir = TempDir::new().unwrap();{
             let index_path = PathBuf::from(index_dir.path());
                 let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
-                features.insert("1".to_string(), Box::new(StringIndex::new("field1".to_string(), Box::from(NoopAnalyzer{}))));
-                features.insert("2".to_string(), Box::new(StringIndex::new("field2".to_string(), Box::from(NoopAnalyzer{}))));
+                features.insert("1".to_string(), Box::new(StringIndex::new("body".to_string(), Box::from(NoopAnalyzer{}))));
                 features.insert("f".to_string(), Box::new(FullDoc::new()));
                 let schema = SegmentSchema {features};
 
