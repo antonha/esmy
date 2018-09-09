@@ -237,7 +237,7 @@ impl Indexer {
         //TODO long-term goal here is to add to some transaction log instead of just adding to in-memory
         let mut local_state = self.state.write().unwrap();
         local_state.docs_to_index.push(doc);
-        let should_commit = self.options.auto_commit && local_state.docs_to_index.len() >= 20_000;
+        let should_commit = self.options.auto_commit && local_state.docs_to_index.len() >= 200;
         if should_commit {
             let docs = mem::replace(&mut local_state.docs_to_index, Vec::new());
             drop(local_state);

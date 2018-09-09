@@ -88,10 +88,7 @@ impl Clone for Box<Feature> {
 pub struct FeatureMeta {
     #[serde(rename = "type")]
     ftype: String,
-    #[serde(
-        default = "no_config",
-        skip_serializing_if = "FeatureConfig::is_none"
-    )]
+    #[serde(default = "no_config", skip_serializing_if = "FeatureConfig::is_none")]
     config: FeatureConfig,
 }
 
@@ -222,15 +219,15 @@ pub fn write_seg(
     if docs.is_empty() {
         return Ok(());
     }
-    for (name, feature) in &schema.features {
+    &schema.features.par_iter().try_for_each(|(name, feature)| {
         feature.write_segment(
             &FeatureAddress {
                 segment: address.clone(),
                 name: name.clone(),
             },
             docs,
-        )?;
-    }
+        )
+    })?;
     let feature_metas = schema_to_feature_metas(&schema);
     let segment_meta = SegmentMeta {
         feature_metas,
@@ -282,7 +279,8 @@ pub fn merge(
                         },
                         i.clone(),
                     )
-                }).collect();
+                })
+                .collect();
             feature.merge_segments(
                 &old_addressses,
                 &FeatureAddress {

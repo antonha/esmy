@@ -36,7 +36,7 @@ mod tests {
     use std::io::Cursor;
 
     proptest!{
-        #![proptest_config(Config::with_cases(100_000))]
+        #![proptest_config(Config::with_cases(100_000_000))]
         #[test]
         fn read_write_correct(num in any::<u64>()) {
             let mut write = Cursor::new(vec![0 as u8; 100]);

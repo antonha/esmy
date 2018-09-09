@@ -3,6 +3,7 @@ use analyzis::Analyzer;
 use analyzis::NoopAnalyzer;
 use doc::Doc;
 use doc::FieldValue;
+use full_doc::FullDocCursor;
 use index::ManagedIndexReader;
 use seg::SegmentReader;
 use std::borrow::Cow;
@@ -13,9 +14,10 @@ pub fn search(
     collector: &mut Collector,
 ) -> Result<(), Error> {
     for segment_reader in index_reader.segment_readers() {
+        collector.set_reader(segment_reader)?;
         match query.segment_matches(&segment_reader)? {
             Some(disi) => for doc in disi {
-                collector.collect(segment_reader, doc?)?;
+                collector.collect(doc?)?;
             },
             None => (),
         };
@@ -100,7 +102,8 @@ impl<'a> SegmentQuery for TextQuery<'a> {
 }
 
 pub trait Collector {
-    fn collect(&mut self, reader: &SegmentReader, doc_id: u64) -> Result<(), Error>;
+    fn set_reader(&mut self, reader: &SegmentReader) -> Result<(), Error>;
+    fn collect(&mut self, doc_id: u64) -> Result<(), Error>;
 }
 
 pub struct CountCollector {
@@ -118,7 +121,11 @@ impl CountCollector {
 }
 
 impl Collector for CountCollector {
-    fn collect(&mut self, _reader: &SegmentReader, _doc_id: u64) -> Result<(), Error> {
+    fn set_reader(&mut self, _reader: &SegmentReader) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn collect(&mut self, _doc_id: u64) -> Result<(), Error> {
         self.count += 1;
         Ok(())
     }
@@ -126,11 +133,15 @@ impl Collector for CountCollector {
 
 pub struct AllDocsCollector {
     docs: Vec<Doc>,
+    doc_cursor: Option<FullDocCursor>,
 }
 
 impl AllDocsCollector {
     pub fn new() -> AllDocsCollector {
-        AllDocsCollector { docs: Vec::new() }
+        AllDocsCollector {
+            docs: Vec::new(),
+            doc_cursor: None,
+        }
     }
 
     pub fn docs(&self) -> &[Doc] {
@@ -139,9 +150,19 @@ impl AllDocsCollector {
 }
 
 impl Collector for AllDocsCollector {
-    fn collect(&mut self, reader: &SegmentReader, doc_id: u64) -> Result<(), Error> {
-        let doc = reader.full_doc().unwrap().read_doc(doc_id)?;
-        self.docs.push(doc);
+    fn set_reader(&mut self, reader: &SegmentReader) -> Result<(), Error> {
+        self.doc_cursor = Some(reader.full_doc().unwrap().cursor()?);
+        Ok(())
+    }
+
+    fn collect(&mut self, doc_id: u64) -> Result<(), Error> {
+        match &mut self.doc_cursor {
+            Some(curs) => {
+                let doc = curs.read_doc(doc_id)?;
+                self.docs.push(doc);
+            }
+            None => {}
+        }
         Ok(())
     }
 }

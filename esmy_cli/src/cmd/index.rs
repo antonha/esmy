@@ -41,16 +41,16 @@ pub fn run(argv: &[&str]) -> Result<(), Error> {
     let index_manager = IndexBuilder::new()
         .auto_merge(!args.flag_no_merge)
         .open(::std::fs::canonicalize(index_path.clone()).unwrap())?;
-    let (sender, receiver) = mpsc::sync_channel(100);
+    let (sender, receiver) = mpsc::sync_channel(20000);
     let flag_file = args.flag_file.clone();
     thread::Builder::new()
         .name("esmy-reader-thread-1".to_owned())
         .spawn(move || -> Result<(), Error> {
             match flag_file {
                 Some(file) => {
-                    let stream =
-                        serde_json::Deserializer::from_reader(BufReader::new(File::open(file)?))
-                            .into_iter::<Doc>();
+                    let stream = serde_json::Deserializer::from_reader(BufReader::new(File::open(
+                        file,
+                    )?)).into_iter::<Doc>();
                     for doc in stream {
                         sender.send(doc).unwrap();
                     }
@@ -65,11 +65,12 @@ pub fn run(argv: &[&str]) -> Result<(), Error> {
                     Ok(())
                 }
             }
-        }).unwrap();
+        })
+        .unwrap();
 
     for doc in receiver {
         index_manager.add_doc(doc.unwrap())?;
     }
-    index_manager.flush()?;
+    index_manager.commit()?;
     Ok(())
 }

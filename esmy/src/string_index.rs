@@ -83,7 +83,6 @@ impl StringIndex {
             offset += write_vint(&mut target_postings, doc_ids.len() as u64)? as u64;
             let mut prev = 0u64;
             for doc_id in doc_ids {
-                let diff = (*doc_id - prev) as u64;
                 offset += write_vint(&mut target_postings, (*doc_id - prev) as u64)? as u64;
                 prev = *doc_id;
             }

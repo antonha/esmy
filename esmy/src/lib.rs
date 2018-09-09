@@ -1,22 +1,18 @@
-extern crate afsort;
 extern crate byteorder;
 extern crate fst;
 extern crate rand;
-extern crate threadpool;
 extern crate unicode_segmentation;
 extern crate walkdir;
 
-extern crate core_affinity;
-extern crate num_cpus;
 extern crate rayon;
-
-extern crate crossbeam_channel;
 
 extern crate rmp_serde as rmps;
 extern crate serde;
 
 #[macro_use]
 extern crate serde_derive;
+
+extern crate flate2;
 
 #[cfg(test)]
 #[macro_use]

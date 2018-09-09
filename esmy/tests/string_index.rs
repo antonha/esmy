@@ -40,12 +40,12 @@ mod tests {
     }
 
     fn arb_doc() -> BoxedStrategy<Doc> {
-        hash_map(arb_fieldname(), arb_fieldvalue(), 1..10).boxed()
+        hash_map(arb_fieldname(), arb_fieldvalue(), 1..2).boxed()
     }
 
     fn arb_index_op() -> BoxedStrategy<IndexOperation> {
         prop_oneof![
-            vec(arb_doc(), 1..100).prop_map(IndexOperation::Index),
+            vec(arb_doc(), 2000..2001).prop_map(IndexOperation::Index),
             Just(IndexOperation::Commit),
             Just(IndexOperation::Merge)
         ].boxed()
@@ -60,11 +60,11 @@ mod tests {
     }
 
     fn op_and_queries() -> BoxedStrategy<(Vec<IndexOperation>, Vec<ValueQuery>)> {
-        vec(arb_index_op(), 0..10)
+        vec(arb_index_op(), 1..100)
             .prop_flat_map(|ops| {
                 let values = extract_values(&ops);
                 if values.len() > 0 {
-                    vec(query(values.clone()), 0..100)
+                    vec(query(values.clone()), 0..1)
                         .prop_map(move |queries| (ops.clone(), queries))
                         .boxed()
                 } else {
@@ -124,7 +124,7 @@ mod tests {
                     &IndexOperation::Commit => {
                         index_manager.commit().expect("Could not commit segments.");
                         in_mem_docs.append(&mut in_mem_seg_docs);
-                        in_mem_seg_docs = Vec::new()
+                        in_mem_seg_docs = Vec::new();
                     },
                     &IndexOperation::Merge => {
                         index_manager.merge().expect("Could not merge segments.");

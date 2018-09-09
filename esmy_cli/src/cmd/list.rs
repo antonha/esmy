@@ -1,5 +1,6 @@
 use docopt::Docopt;
 use esmy::analyzis::Analyzer;
+use esmy::full_doc::FullDocCursor;
 use esmy::index::IndexBuilder;
 use esmy::search;
 use esmy::search::Collector;
@@ -53,22 +54,35 @@ fn parse_query<'a>(query_string: &'a str, analyzer: &'a Analyzer) -> TextQuery<'
     TextQuery::new(split[0], split[1], analyzer)
 }
 
-struct PrintAllCollector {}
+struct PrintAllCollector {
+    doc_cursor: Option<FullDocCursor>,
+}
 
 impl PrintAllCollector {
     pub fn new() -> PrintAllCollector {
-        PrintAllCollector {}
+        PrintAllCollector { doc_cursor: None }
     }
 }
 
 impl Collector for PrintAllCollector {
-    fn collect(&mut self, reader: &SegmentReader, doc_id: u64) -> Result<(), Error> {
-        let doc = reader.full_doc().unwrap().read_doc(doc_id)?;
-        //TODO error handling could be better
-        match serde_json::to_writer(io::stdout(), &doc) {
-            _ => (),
+    
+    fn set_reader(&mut self, reader: &SegmentReader) -> Result<(), Error> {
+        self.doc_cursor = Some(reader.full_doc().unwrap().cursor()?);
+        Ok(())
+    }
+
+    fn collect(&mut self, doc_id: u64) -> Result<(), Error> {
+        match &mut self.doc_cursor {
+            Some(curs) => {
+                let doc = curs.read_doc(doc_id)?;
+                //TODO error handling could be better
+                match serde_json::to_writer(io::stdout(), &doc) {
+                    _ => (),
+                }
+                println!();
+            }
+            None => {}
         }
-        println!();
         Ok(())
     }
 }
