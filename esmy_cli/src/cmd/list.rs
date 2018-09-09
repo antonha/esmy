@@ -65,7 +65,6 @@ impl PrintAllCollector {
 }
 
 impl Collector for PrintAllCollector {
-    
     fn set_reader(&mut self, reader: &SegmentReader) -> Result<(), Error> {
         self.doc_cursor = Some(reader.full_doc().unwrap().cursor()?);
         Ok(())

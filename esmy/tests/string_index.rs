@@ -5,6 +5,9 @@ extern crate esmy;
 extern crate proptest;
 
 #[cfg(test)]
+extern crate tempfile;
+
+#[cfg(test)]
 mod tests {
     use esmy::analyzis::NoopAnalyzer;
     use esmy::doc::Doc;
@@ -64,7 +67,7 @@ mod tests {
             .prop_flat_map(|ops| {
                 let values = extract_values(&ops);
                 if values.len() > 0 {
-                    vec(query(values.clone()), 0..1)
+                    vec(query(values.clone()), 0..100)
                         .prop_map(move |queries| (ops.clone(), queries))
                         .boxed()
                 } else {
@@ -110,7 +113,10 @@ mod tests {
             features.insert("f".to_string(), Box::new(FullDoc::new()));
             let schema = SegmentSchema {features};
 
-            let index_manager = IndexBuilder::new().auto_commit(false).auto_merge(false).create(index_path, schema).expect("Could not open index.");
+            let index_manager = IndexBuilder::new()
+                .auto_commit(false)
+                .auto_merge(false)
+                .create(index_path, schema).expect("Could not open index.");
             let mut in_mem_docs = Vec::new();
             let mut in_mem_seg_docs = Vec::new();
             for op in ops {

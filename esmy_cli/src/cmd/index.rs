@@ -48,9 +48,9 @@ pub fn run(argv: &[&str]) -> Result<(), Error> {
         .spawn(move || -> Result<(), Error> {
             match flag_file {
                 Some(file) => {
-                    let stream = serde_json::Deserializer::from_reader(BufReader::new(File::open(
-                        file,
-                    )?)).into_iter::<Doc>();
+                    let stream =
+                        serde_json::Deserializer::from_reader(BufReader::new(File::open(file)?))
+                            .into_iter::<Doc>();
                     for doc in stream {
                         sender.send(doc).unwrap();
                     }
@@ -65,8 +65,7 @@ pub fn run(argv: &[&str]) -> Result<(), Error> {
                     Ok(())
                 }
             }
-        })
-        .unwrap();
+        }).unwrap();
 
     for doc in receiver {
         index_manager.add_doc(doc.unwrap())?;

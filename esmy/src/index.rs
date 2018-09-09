@@ -193,9 +193,7 @@ impl Indexer {
         Ok(indexer.clone())
     }
 
-    fn init_state(
-        path: &Path,
-    ) -> Result<Arc<RwLock<IndexState>>, Error> {
+    fn init_state(path: &Path) -> Result<Arc<RwLock<IndexState>>, Error> {
         let mut segments = HashMap::new();
         for segment_address in Self::segments_on_disk(&path)? {
             segments.insert(
@@ -247,10 +245,7 @@ impl Indexer {
     }
 
     pub fn force_commit(&self) -> Result<(), Error> {
-        let docs = mem::replace(
-            &mut self.state.write().unwrap().docs_to_index,
-            Vec::new(),
-        );
+        let docs = mem::replace(&mut self.state.write().unwrap().docs_to_index, Vec::new());
         self.do_commit(docs)
     }
 

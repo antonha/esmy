@@ -77,7 +77,7 @@ impl Feature for FullDoc {
             doc.serialize(&mut rmps::Serializer::new(&mut writer))
                 .unwrap();
             block_offset += 1;
-            if block_offset > 0 && (block_offset % 4096 == 0 || block_offset % 3 == 0) {
+            if block_offset % 4096 == 0 {
                 doc_buf_writer = writer.finish()?;
                 doc_buf_writer.flush()?;
                 file_offset = doc_buf_writer.seek(SeekFrom::Current(0))?;
