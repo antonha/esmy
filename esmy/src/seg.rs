@@ -88,7 +88,10 @@ impl Clone for Box<Feature> {
 pub struct FeatureMeta {
     #[serde(rename = "type")]
     ftype: String,
-    #[serde(default = "no_config", skip_serializing_if = "FeatureConfig::is_none")]
+    #[serde(
+        default = "no_config",
+        skip_serializing_if = "FeatureConfig::is_none"
+    )]
     config: FeatureConfig,
 }
 
@@ -279,8 +282,7 @@ pub fn merge(
                         },
                         i.clone(),
                     )
-                })
-                .collect();
+                }).collect();
             feature.merge_segments(
                 &old_addressses,
                 &FeatureAddress {
