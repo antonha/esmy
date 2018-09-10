@@ -72,6 +72,45 @@ impl FullDocQuery for ValueQuery {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct TermQuery {
+    field: String,
+    value: String,
+    analyzer: Box<dyn Analyzer + 'static>
+}
+
+impl TermQuery {
+    pub fn new(field: String, value: String, analyzer: Box<dyn Analyzer + 'static>) -> TermQuery {
+        TermQuery { field, value, analyzer}
+    }
+}
+
+impl SegmentQuery for TermQuery {
+    fn segment_matches(
+        &self,
+        reader: &SegmentReader,
+    ) -> Result<Option<Box<Iterator<Item = Result<u64, Error>>>>, Error> {
+        match reader.string_index(&self.field, &*self.analyzer) {
+            Some(index) => match index.doc_iter(&self.value)? {
+                Some(iter) => Ok(Some(Box::from(iter))),
+                None => Ok(None),
+            },
+            None => Ok(None),
+        }
+    }
+}
+
+impl FullDocQuery for TermQuery {
+    fn matches(&self, doc: &Doc) -> bool {
+        match doc.get(&self.field) {
+            Some(&FieldValue::String(ref val)) => {
+                self.analyzer.analyze(val).find(|t| t == &self.value).is_some()
+            }
+            None => false,
+        }
+    }
+}
+
 pub struct TextQuery<'a> {
     field: &'a str,
     values: Vec<Cow<'a, str>>,

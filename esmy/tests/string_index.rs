@@ -15,51 +15,88 @@ extern crate rayon;
 #[macro_use]
 extern crate lazy_static;
 
+use esmy::analyzis::Analyzer;
 use esmy::analyzis::NoopAnalyzer;
+use esmy::analyzis::UAX29Analyzer;
 use esmy::doc::Doc;
 use esmy::doc::FieldValue;
 use esmy::full_doc::FullDoc;
 use esmy::index::Index;
 use esmy::index::IndexBuilder;
-use esmy::search::{search, AllDocsCollector, FullDocQuery, SegmentQuery, ValueQuery};
+use esmy::search::search;
+use esmy::search::AllDocsCollector;
+use esmy::search::FullDocQuery;
+use esmy::search::SegmentQuery;
+use esmy::search::ValueQuery;
+use esmy::search::TermQuery;
 use esmy::seg::Feature;
 use esmy::seg::SegmentSchema;
 use esmy::string_index::StringIndex;
 use proptest::collection::vec;
 use proptest::prelude::*;
 use proptest::test_runner::Config;
-use rayon::prelude::*;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
 proptest! {
-    #![proptest_config(Config::with_cases(200))]
+    #![proptest_config(Config::with_cases(1000))]
     #[test]
-    fn value_query_matches_body((ref ops, ref queries) in op_and_value_queries("body".to_owned())) {
-        let index_dir = TempDir::new().unwrap();
+    fn value_query_wiki_body_matching((ref ops, ref queries) in op_and_value_queries("body".to_owned())) {
         {
-            let index_path = PathBuf::from(index_dir.path());
             let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
             features.insert("1".to_string(), Box::new(StringIndex::new("body".to_string(), Box::from(NoopAnalyzer{}))));
             features.insert("f".to_string(), Box::new(FullDoc::new()));
             let schema = SegmentSchema {features};
-
-            let index = IndexBuilder::new()
-                .auto_commit(false)
-                .auto_merge(false)
-                .create(index_path, schema)
-                .expect("Could not open index.");
-            let mut index_test_state = IndexTestState{
-                index,
-                in_mem_docs: Vec::new(),
-                in_mem_seg_docs: Vec::new(),
-            };
-            index_test_state.apply_ops(ops);
-            index_test_state.check_queries_match_same::<ValueQuery>(queries);
+            index_and_assert_search_matches(&schema, ops, queries);
         }
-        index_dir.close().unwrap();
     }
+
+    #[test]
+    fn value_query_wiki_id_matching((ref ops, ref queries) in op_and_value_queries("id".to_owned())) {
+        {
+            let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
+            features.insert("1".to_string(), Box::new(StringIndex::new("id".to_string(), Box::from(NoopAnalyzer{}))));
+            features.insert("f".to_string(), Box::new(FullDoc::new()));
+            let schema = SegmentSchema {features};
+            index_and_assert_search_matches(&schema, ops, queries);
+        }
+    }
+
+    #[test]
+    fn term_query_wiki_body_matching((ref ops, ref queries) in op_and_term_queries("body".to_owned(), Box::new(UAX29Analyzer::new()))) {
+        {
+            let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
+            features.insert("1".to_string(), Box::new(StringIndex::new("body".to_string(), Box::from(NoopAnalyzer{}))));
+            features.insert("f".to_string(), Box::new(FullDoc::new()));
+            let schema = SegmentSchema {features};
+            index_and_assert_search_matches(&schema, ops, queries);
+        }
+    }
+}
+
+fn index_and_assert_search_matches<Q>(schema: &SegmentSchema, ops: &[IndexOperation], queries: &[Q])
+where
+    Q: SegmentQuery + FullDocQuery + Send,
+{
+    let index_dir = TempDir::new().unwrap();
+    {
+        let index_path = PathBuf::from(index_dir.path());
+        let index = IndexBuilder::new()
+            .auto_commit(false)
+            .auto_merge(false)
+            .create(index_path, schema.clone())
+            .expect("Could not open index.");
+        let mut index_test_state = IndexTestState {
+            index,
+            in_mem_docs: Vec::new(),
+            in_mem_seg_docs: Vec::new(),
+        };
+        index_test_state.apply_ops(ops);
+        index_test_state.check_queries_match_same::<Q>(queries);
+    }
+    index_dir.close().unwrap();
 }
 
 static COMPRESSED_JSON_WIKI_DOCS: &[u8] = include_bytes!("50k_wiki_docs.json.gz");
@@ -73,35 +110,6 @@ lazy_static! {
     };
 }
 
-#[derive(Debug, Clone)]
-enum IndexOperation {
-    Index(Vec<Doc>),
-    Commit,
-    Merge,
-}
-
-fn arb_doc() -> BoxedStrategy<Doc> {
-    (0..WIKI_DOCS.len())
-        .prop_map(|i| WIKI_DOCS[i].clone())
-        .boxed()
-}
-
-fn arb_index_op() -> BoxedStrategy<IndexOperation> {
-    prop_oneof![
-        vec(arb_doc(), 2..50).prop_map(IndexOperation::Index),
-        Just(IndexOperation::Commit),
-        Just(IndexOperation::Merge)
-    ].boxed()
-}
-
-fn value_query(field_name: String, vec: Vec<String>) -> BoxedStrategy<ValueQuery> {
-    (0..vec.len())
-        .prop_map(move |i| {
-            let val = &vec[i];
-            ValueQuery::new(field_name.to_owned(), val.clone())
-        }).boxed()
-}
-
 fn op_and_value_queries(field: String) -> BoxedStrategy<(Vec<IndexOperation>, Vec<ValueQuery>)> {
     vec(arb_index_op(), 1..10)
         .prop_flat_map(move |ops| {
@@ -113,7 +121,73 @@ fn op_and_value_queries(field: String) -> BoxedStrategy<(Vec<IndexOperation>, Ve
             } else {
                 Just((ops.clone(), Vec::new())).boxed()
             }
-        }).boxed()
+        })
+        .boxed()
+}
+
+fn op_and_term_queries(field: String, analyzer: Box<dyn Analyzer>) -> BoxedStrategy<(Vec<IndexOperation>, Vec<TermQuery>)> {
+    vec(arb_index_op(), 1..10)
+        .prop_flat_map(move |ops| {
+            let values = extract_terms(&ops, &field, &*analyzer);
+            if values.len() > 0 {
+                vec(term_query(field.to_owned(), analyzer.clone(), values.clone()), 0..100)
+                    .prop_map(move |queries| (ops.clone(), queries))
+                    .boxed()
+            } else {
+                Just((ops.clone(), Vec::new())).boxed()
+            }
+        })
+        .boxed()
+}
+
+fn value_query(field_name: String, values: Vec<String>) -> BoxedStrategy<ValueQuery> {
+    (0..values.len())
+        .prop_map(move |i| {
+            let val = &values[i];
+            ValueQuery::new(field_name.to_owned(), val.clone())
+        })
+        .boxed()
+}
+
+fn term_query(field_name: String, analyzer: Box<dyn Analyzer>, terms: Vec<String>) -> BoxedStrategy<TermQuery> {
+    (0..terms.len())
+        .prop_map(move |i| {
+            let term = &terms[i];
+            TermQuery::new(field_name.to_owned(), term.clone(), analyzer.clone())
+        })
+        .boxed()
+}
+
+fn arb_index_op() -> BoxedStrategy<IndexOperation> {
+    prop_oneof![
+        vec(arb_doc(), 2..50).prop_map(IndexOperation::Index),
+        Just(IndexOperation::Commit),
+        Just(IndexOperation::Merge)
+    ].boxed()
+}
+
+fn arb_doc() -> BoxedStrategy<Doc> {
+    (0..WIKI_DOCS.len())
+        .prop_map(|i| WIKI_DOCS[i].clone())
+        .boxed()
+}
+
+#[derive(Debug, Clone)]
+enum IndexOperation {
+    Index(Vec<Doc>),
+    Commit,
+    Merge,
+}
+
+fn extract_terms(ops: &[IndexOperation], field_name: &str, analyzer: &Analyzer) -> Vec<String> {
+    let values = extract_values(ops, field_name);
+    let mut tokens = HashSet::new();
+    for v in values {
+        for t in analyzer.analyze(&v) {
+            tokens.insert(t.into_owned());
+        }
+    }
+    tokens.into_iter().collect()
 }
 
 fn extract_values(ops: &[IndexOperation], field_name: &str) -> Vec<String> {
@@ -166,12 +240,12 @@ impl IndexTestState {
         }
     }
 
-    fn check_queries_match_same<Q>(&self, queries: &[ValueQuery])
+    fn check_queries_match_same<Q>(&self, queries: &[Q])
     where
         Q: FullDocQuery + SegmentQuery + Send + Sized,
     {
         let reader = self.index.open_reader().unwrap();
-        queries.par_iter().for_each(|query| {
+        queries.iter().for_each(|query| {
             let expected_matches: Vec<Doc> = self
                 .in_mem_docs
                 .iter()

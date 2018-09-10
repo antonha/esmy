@@ -1,8 +1,9 @@
 use std::borrow::Cow;
 use std::iter;
+use std::fmt::Debug;
 use unicode_segmentation::UnicodeSegmentation;
 
-pub trait Analyzer: AnalyzerClone + Send + Sync {
+pub trait Analyzer: AnalyzerClone + Send + Sync + Debug {
     fn analyzer_type(&self) -> &'static str;
     fn analyze<'a>(&self, value: &'a str) -> Box<Iterator<Item = Cow<'a, str>> + 'a>;
 }
@@ -37,7 +38,7 @@ impl Clone for Box<Analyzer> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct UAX29Analyzer;
 
 impl UAX29Analyzer {
@@ -80,7 +81,7 @@ fn is_only_whitespace_or_control_char(s: &str) -> bool {
     return true;
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct WhiteSpaceAnalyzer;
 
 impl WhiteSpaceAnalyzer {
@@ -103,7 +104,7 @@ impl Analyzer for WhiteSpaceAnalyzer {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NoopAnalyzer;
 
 impl NoopAnalyzer {
