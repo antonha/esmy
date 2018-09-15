@@ -25,63 +25,79 @@ use esmy::index::Index;
 use esmy::index::IndexBuilder;
 use esmy::search::search;
 use esmy::search::AllDocsCollector;
-use esmy::search::FullDocQuery;
-use esmy::search::SegmentQuery;
-use esmy::search::ValueQuery;
+use esmy::search::AllQuery;
+use esmy::search::MatchAllDocsQuery;
+use esmy::search::Query;
 use esmy::search::TermQuery;
+use esmy::search::ValueQuery;
 use esmy::seg::Feature;
 use esmy::seg::SegmentSchema;
 use esmy::string_index::StringIndex;
 use proptest::collection::vec;
+use proptest::collection::SizeRange;
 use proptest::prelude::*;
 use proptest::test_runner::Config;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use tempfile::TempDir;
-use std::fmt::Debug;
 
 proptest! {
-    
+
     #![proptest_config(Config::with_cases(1000))]
     #[test]
-    fn value_query_wiki_body_matching((ref ops, ref queries) in op_and_value_queries("text".to_owned())) {
-        {
-            let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
-            features.insert("1".to_string(), Box::new(StringIndex::new("text".to_string(), Box::from(NoopAnalyzer{}))));
-            features.insert("f".to_string(), Box::new(FullDoc::new()));
-            let schema = SegmentSchema {features};
-            index_and_assert_search_matches(&schema, ops, queries);
-        }
+    fn value_query_wiki_body_matching((ref ops, ref queries) in op_and_value_queries(0..10, 0..50, 0..100, "text".to_owned())) {
+        let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
+        features.insert("1".to_string(), Box::new(StringIndex::new("text".to_string(), Box::from(NoopAnalyzer{}))));
+        features.insert("f".to_string(), Box::new(FullDoc::new()));
+        let schema = SegmentSchema {features};
+        index_and_assert_search_matches(&schema, ops, queries);
     }
 
     #[test]
-    fn value_query_wiki_id_matching((ref ops, ref queries) in op_and_value_queries("id".to_owned())) {
-        {
-            let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
-            features.insert("1".to_string(), Box::new(StringIndex::new("id".to_string(), Box::from(NoopAnalyzer{}))));
-            features.insert("f".to_string(), Box::new(FullDoc::new()));
-            let schema = SegmentSchema {features};
-            index_and_assert_search_matches(&schema, ops, queries);
-        }
+    fn value_query_wiki_id_matching((ref ops, ref queries) in op_and_value_queries(0..10, 0..50, 0..100, "id".to_owned())) {
+        let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
+        features.insert("1".to_string(), Box::new(StringIndex::new("id".to_string(), Box::from(NoopAnalyzer{}))));
+        features.insert("f".to_string(), Box::new(FullDoc::new()));
+        let schema = SegmentSchema {features};
+        index_and_assert_search_matches(&schema, ops, queries);
     }
 
     #[test]
-    fn term_query_wiki_body_matching((ref ops, ref queries) in op_and_term_queries("text".to_owned(), Box::new(UAX29Analyzer::new()))) {
-        {
-            let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
-            features.insert("1".to_string(), Box::new(StringIndex::new("text".to_string(), Box::from(UAX29Analyzer{}))));
-            features.insert("f".to_string(), Box::new(FullDoc::new()));
-            let schema = SegmentSchema {features};
-            index_and_assert_search_matches(&schema, ops, queries);
-        }
+    fn term_query_wiki_body_matching((ref ops, ref queries) in op_and_term_queries(0..10, 0..50, 0..100, "text".to_owned(), Box::new(UAX29Analyzer::new()))) {
+        let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
+        features.insert("1".to_string(), Box::new(StringIndex::new("text".to_string(), Box::from(UAX29Analyzer{}))));
+        features.insert("f".to_string(), Box::new(FullDoc::new()));
+        let schema = SegmentSchema {features};
+        index_and_assert_search_matches(&schema, ops, queries);
+    }
+
+    #[test]
+    fn all_query_wiki_body_matching((ref ops, ref queries) in op_and_all_queries(0..10, 0..50, 0..100, "text".to_owned(), Box::new(UAX29Analyzer::new()))) {
+        let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
+        features.insert("1".to_string(), Box::new(StringIndex::new("text".to_string(), Box::from(UAX29Analyzer{}))));
+        features.insert("f".to_string(), Box::new(FullDoc::new()));
+        let schema = SegmentSchema {features};
+        index_and_assert_search_matches(&schema, ops, queries);
     }
 }
 
-fn index_and_assert_search_matches<Q>(schema: &SegmentSchema, ops: &[IndexOperation], queries: &[Q])
-where
-    Q: SegmentQuery + FullDocQuery + Send + Debug
-{
+proptest! {
+    #![proptest_config(Config::with_cases(10))]
+    #[test]
+    fn all_docs_many_docs_matching((ref ops, ref queries) in op_and_match_all_queries(0..10, 5000..10_000)) {
+        let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
+        features.insert("f".to_string(), Box::new(FullDoc::new()));
+        let schema = SegmentSchema {features};
+        index_and_assert_search_matches(&schema, ops, queries);
+    }
+}
+
+fn index_and_assert_search_matches(
+    schema: &SegmentSchema,
+    ops: &[IndexOperation],
+    queries: &[Box<Query>],
+) {
     let index_dir = TempDir::new().unwrap();
     {
         let index_path = PathBuf::from(index_dir.path());
@@ -96,7 +112,7 @@ where
             in_mem_seg_docs: Vec::new(),
         };
         index_test_state.apply_ops(ops);
-        index_test_state.check_queries_match_same::<Q>(queries);
+        index_test_state.check_queries_match_same(queries);
     }
     index_dir.close().unwrap();
 }
@@ -112,57 +128,130 @@ lazy_static! {
     };
 }
 
-fn op_and_value_queries(field: String) -> BoxedStrategy<(Vec<IndexOperation>, Vec<ValueQuery>)> {
-    vec(arb_index_op(), 1..10)
+fn op_and_value_queries(
+    num_ops: impl Into<SizeRange>,
+    num_docs: impl Into<SizeRange>,
+    num_queries: impl Into<SizeRange>,
+    field: String,
+) -> BoxedStrategy<(Vec<IndexOperation>, Vec<Box<dyn Query>>)> {
+    let num_queries: SizeRange = num_queries.into();
+    vec(arb_index_op(num_docs), num_ops)
         .prop_flat_map(move |ops| {
+            let num_queries = num_queries.clone();
             let values = extract_values(&ops, &field);
             if values.len() > 0 {
-                vec(value_query(field.to_owned(), values.clone()), 0..100)
+                vec(value_query(field.to_owned(), values.clone()), num_queries)
                     .prop_map(move |queries| (ops.clone(), queries))
                     .boxed()
             } else {
-                Just((ops.clone(), Vec::new())).boxed()
+                let vec: Vec<Box<Query>> = Vec::new();
+                Just((ops.clone(), vec)).boxed()
             }
-        })
-        .boxed()
+        }).boxed()
 }
 
-fn op_and_term_queries(field: String, analyzer: Box<dyn Analyzer>) -> BoxedStrategy<(Vec<IndexOperation>, Vec<TermQuery>)> {
-    vec(arb_index_op(), 1..10)
+fn op_and_term_queries(
+    num_ops: impl Into<SizeRange>,
+    num_docs: impl Into<SizeRange>,
+    num_queries: impl Into<SizeRange>,
+    field: String,
+    analyzer: Box<dyn Analyzer>,
+) -> BoxedStrategy<(Vec<IndexOperation>, Vec<Box<Query>>)> {
+    let num_queries: SizeRange = num_queries.into();
+    vec(arb_index_op(num_docs), num_ops)
         .prop_flat_map(move |ops| {
+            let num_queries = num_queries.clone();
             let values = extract_terms(&ops, &field, &*analyzer);
             if values.len() > 0 {
-                vec(term_query(field.to_owned(), analyzer.clone(), values.clone()), 0..100)
-                    .prop_map(move |queries| (ops.clone(), queries))
-                    .boxed()
+                vec(
+                    term_query(field.to_owned(), analyzer.clone(), values.clone()),
+                    num_queries,
+                ).prop_map(move |queries| (ops.clone(), queries))
+                .boxed()
             } else {
-                Just((ops.clone(), Vec::new())).boxed()
+                let vec: Vec<Box<Query>> = Vec::new();
+                Just((ops.clone(), vec)).boxed()
             }
-        })
-        .boxed()
+        }).boxed()
 }
 
-fn value_query(field_name: String, values: Vec<String>) -> BoxedStrategy<ValueQuery> {
+fn op_and_match_all_queries(
+    num_ops: impl Into<SizeRange>,
+    num_docs: impl Into<SizeRange>,
+) -> BoxedStrategy<(Vec<IndexOperation>, Vec<Box<Query>>)> {
+    vec(arb_index_op(num_docs), num_ops)
+        .prop_map(move |ops| {
+            (
+                ops.clone(),
+                vec![Box::new(MatchAllDocsQuery::new()) as Box<Query>],
+            )
+        }).boxed()
+}
+
+fn op_and_all_queries(
+    num_ops: impl Into<SizeRange>,
+    num_docs: impl Into<SizeRange>,
+    num_queries: impl Into<SizeRange>,
+    field: String,
+    analyzer: Box<dyn Analyzer>,
+) -> BoxedStrategy<(Vec<IndexOperation>, Vec<Box<Query>>)> {
+    let num_queries: SizeRange = num_queries.into();
+    vec(arb_index_op(num_docs), num_ops)
+        .prop_flat_map(move |ops| {
+            let num_queries = num_queries.clone();
+            let values = extract_terms(&ops, &field, &*analyzer);
+            if values.len() > 0 {
+                vec(
+                    all_queries(field.to_owned(), analyzer.clone(), values.clone()),
+                    num_queries,
+                ).prop_map(move |queries| (ops.clone(), queries))
+                .boxed()
+            } else {
+                let vec: Vec<Box<Query>> = Vec::new();
+                Just((ops.clone(), vec)).boxed()
+            }
+        }).boxed()
+}
+
+fn value_query(field_name: String, values: Vec<String>) -> BoxedStrategy<Box<Query>> {
     (0..values.len())
         .prop_map(move |i| {
             let val = &values[i];
-            ValueQuery::new(field_name.to_owned(), val.clone())
-        })
-        .boxed()
+            Box::new(ValueQuery::new(field_name.to_owned(), val.clone())) as Box<Query>
+        }).boxed()
 }
 
-fn term_query(field_name: String, analyzer: Box<dyn Analyzer>, terms: Vec<String>) -> BoxedStrategy<TermQuery> {
+fn term_query(
+    field_name: String,
+    analyzer: Box<dyn Analyzer>,
+    terms: Vec<String>,
+) -> BoxedStrategy<Box<Query>> {
     (0..terms.len())
         .prop_map(move |i| {
             let term = &terms[i];
-            TermQuery::new(field_name.to_owned(), term.clone(), analyzer.clone())
-        })
-        .boxed()
+            Box::new(TermQuery::new(
+                field_name.to_owned(),
+                term.clone(),
+                analyzer.clone(),
+            )) as Box<Query>
+        }).boxed()
 }
 
-fn arb_index_op() -> BoxedStrategy<IndexOperation> {
+fn all_queries(
+    field_name: String,
+    analyzer: Box<dyn Analyzer>,
+    terms: Vec<String>,
+) -> BoxedStrategy<Box<Query>> {
+    vec(
+        term_query(field_name.clone(), analyzer.clone(), terms.clone()),
+        1..5,
+    ).prop_map(|sub_queries| Box::new(AllQuery::new(sub_queries)) as Box<Query>)
+    .boxed()
+}
+
+fn arb_index_op(num_docs: impl Into<SizeRange>) -> BoxedStrategy<IndexOperation> {
     prop_oneof![
-        vec(arb_doc(), 2..50).prop_map(IndexOperation::Index),
+        vec(arb_doc(), num_docs).prop_map(IndexOperation::Index),
         Just(IndexOperation::Commit),
         Just(IndexOperation::Merge)
     ].boxed()
@@ -242,10 +331,7 @@ impl IndexTestState {
         }
     }
 
-    fn check_queries_match_same<Q>(&self, queries: &[Q])
-    where
-        Q: FullDocQuery + SegmentQuery + Send + Sized + Debug,
-    {
+    fn check_queries_match_same(&self, queries: &[Box<Query>]) {
         let reader = self.index.open_reader().unwrap();
         queries.iter().for_each(|query| {
             let expected_matches: Vec<Doc> = self

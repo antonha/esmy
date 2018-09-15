@@ -314,6 +314,7 @@ pub fn merge(
 
 pub struct SegmentReader {
     //address: SegmentAddress,
+    info: SegmentInfo,
     readers: HashMap<String, Box<FeatureReader>>,
 }
 
@@ -328,8 +329,13 @@ impl SegmentReader {
             feature_readers.insert(name.clone(), feature.reader(address)?);
         }
         Ok(SegmentReader {
+            info: info,
             readers: feature_readers,
         })
+    }
+
+    pub fn info(&self) -> &SegmentInfo {
+        &self.info
     }
 
     pub fn string_index(

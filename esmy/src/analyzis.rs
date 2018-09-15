@@ -1,6 +1,6 @@
 use std::borrow::Cow;
-use std::iter;
 use std::fmt::Debug;
+use std::iter;
 use unicode_segmentation::UnicodeSegmentation;
 
 pub trait Analyzer: AnalyzerClone + Send + Sync + Debug {
