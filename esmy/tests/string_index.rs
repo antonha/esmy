@@ -39,14 +39,16 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use tempfile::TempDir;
+use std::fmt::Debug;
 
 proptest! {
+    
     #![proptest_config(Config::with_cases(1000))]
     #[test]
-    fn value_query_wiki_body_matching((ref ops, ref queries) in op_and_value_queries("body".to_owned())) {
+    fn value_query_wiki_body_matching((ref ops, ref queries) in op_and_value_queries("text".to_owned())) {
         {
             let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
-            features.insert("1".to_string(), Box::new(StringIndex::new("body".to_string(), Box::from(NoopAnalyzer{}))));
+            features.insert("1".to_string(), Box::new(StringIndex::new("text".to_string(), Box::from(NoopAnalyzer{}))));
             features.insert("f".to_string(), Box::new(FullDoc::new()));
             let schema = SegmentSchema {features};
             index_and_assert_search_matches(&schema, ops, queries);
@@ -65,10 +67,10 @@ proptest! {
     }
 
     #[test]
-    fn term_query_wiki_body_matching((ref ops, ref queries) in op_and_term_queries("body".to_owned(), Box::new(UAX29Analyzer::new()))) {
+    fn term_query_wiki_body_matching((ref ops, ref queries) in op_and_term_queries("text".to_owned(), Box::new(UAX29Analyzer::new()))) {
         {
             let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
-            features.insert("1".to_string(), Box::new(StringIndex::new("body".to_string(), Box::from(NoopAnalyzer{}))));
+            features.insert("1".to_string(), Box::new(StringIndex::new("text".to_string(), Box::from(UAX29Analyzer{}))));
             features.insert("f".to_string(), Box::new(FullDoc::new()));
             let schema = SegmentSchema {features};
             index_and_assert_search_matches(&schema, ops, queries);
@@ -78,7 +80,7 @@ proptest! {
 
 fn index_and_assert_search_matches<Q>(schema: &SegmentSchema, ops: &[IndexOperation], queries: &[Q])
 where
-    Q: SegmentQuery + FullDocQuery + Send,
+    Q: SegmentQuery + FullDocQuery + Send + Debug
 {
     let index_dir = TempDir::new().unwrap();
     {
@@ -242,7 +244,7 @@ impl IndexTestState {
 
     fn check_queries_match_same<Q>(&self, queries: &[Q])
     where
-        Q: FullDocQuery + SegmentQuery + Send + Sized,
+        Q: FullDocQuery + SegmentQuery + Send + Sized + Debug,
     {
         let reader = self.index.open_reader().unwrap();
         queries.iter().for_each(|query| {
@@ -260,7 +262,6 @@ impl IndexTestState {
 }
 
 fn assert_same_docs(expected: &[Doc], actual: &[Doc]) {
-    assert_eq!(expected.len(), actual.len());
     for doc in actual {
         assert!(expected.contains(doc), "Expected = {} did not contain {}")
     }
