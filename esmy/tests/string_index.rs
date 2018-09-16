@@ -10,8 +10,6 @@ extern crate serde_json;
 
 extern crate flate2;
 
-extern crate rayon;
-
 #[macro_use]
 extern crate lazy_static;
 

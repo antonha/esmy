@@ -110,6 +110,29 @@ pub struct SegmentSchema {
     pub features: HashMap<String, Box<Feature>>,
 }
 
+pub struct SegmentSchemaBuilder {
+    features: HashMap<String, Box<Feature>>,
+}
+
+impl SegmentSchemaBuilder {
+    pub fn new() -> SegmentSchemaBuilder {
+        SegmentSchemaBuilder {
+            features: HashMap::new(),
+        }
+    }
+
+    pub fn add_feature<T: Into<String>>(mut self, name: T, feature: Box<Feature>) -> Self {
+        self.features.insert(name.into(), feature);
+        self
+    }
+
+    pub fn build(self) -> SegmentSchema {
+        SegmentSchema {
+            features: self.features,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct SegmentAddress {
     pub path: PathBuf,

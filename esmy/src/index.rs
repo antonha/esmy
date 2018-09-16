@@ -381,8 +381,7 @@ fn find_merges(mut segments_in: Vec<SegmentInfo>) -> MergeSpec {
             if !queue.is_empty() {
                 let is_in_stage = {
                     let info = queue.front().unwrap();
-                    first.doc_count < 5000 ||
-                        info.doc_count as f64 > first.doc_count as f64 * 0.6
+                    first.doc_count < 5000 || info.doc_count as f64 > first.doc_count as f64 * 0.6
                 };
                 if is_in_stage {
                     stage.push(queue.pop_front().unwrap());
