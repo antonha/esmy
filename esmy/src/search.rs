@@ -142,35 +142,78 @@ impl Query for TermQuery {
     }
 }
 
-/*
-pub struct TextQuery<'a> {
-    field: &'a str,
-    values: Vec<Cow<'a, str>>,
-    analyzer: &'a Analyzer,
+#[derive(Debug, Clone)]
+pub struct TextQuery {
+    field: String,
+    values: Vec<String>,
+    //TODO: Cow<str> instead?
+    analyzer: Box<Analyzer>,
 }
 
-impl<'a> TextQuery<'a> {
-    pub fn new<'n>(field: &'n str, value: &'n str, analyzer: &'n Analyzer) -> TextQuery<'n> {
+impl TextQuery {
+    pub fn new(field: String, value: String, analyzer: Box<Analyzer>) -> TextQuery {
         TextQuery {
             field: field,
-            values: analyzer.analyze(value).collect::<Vec<Cow<str>>>(),
+            values: analyzer
+                .analyze(&value)
+                .map(|c| c.to_string())
+                .collect::<Vec<String>>(),
             analyzer,
         }
     }
 }
 
-impl<'a> Query for TextQuery<'a> {
+impl Query for TextQuery {
     fn segment_matches(
         &self,
         reader: &SegmentReader,
     ) -> Result<Option<Box<Iterator<Item = Result<u64, Error>>>>, Error> {
-        let index = reader.string_index(self.field, self.analyzer).unwrap();
-        match index.doc_iter(&self.values[0])? {
-            Some(iter) => Ok(Some(Box::from(iter))),
-            None => Ok(None),
+        if self.values.len() == 1 {
+            let index = reader.string_index(&self.field, &*self.analyzer).unwrap();
+            match index.doc_iter(&self.values[0])? {
+                Some(iter) => Ok(Some(Box::from(iter))),
+                None => Ok(None),
+            }
+        } else {
+            let mut sub: Vec<Box<Iterator<Item = Result<u64, Error>>>> =
+                Vec::with_capacity(self.values.len());
+            let index = reader.string_index(&self.field, &*self.analyzer).unwrap();
+            for q in &self.values {
+                match index.doc_iter(&q)? {
+                    Some(iter) => sub.push(Box::new(iter)),
+                    None => return Ok(None),
+                };
+            }
+
+            let mut full_doc = reader.full_doc().unwrap().cursor()?;
+            let mut ids: Vec<u64> = Vec::new();
+            for doc_res in (AllIterator { sub }) {
+                let doc_id = doc_res?;
+                if self.matches(&full_doc.read_doc(doc_id)?) {
+                    ids.push(doc_id);
+                }
+            }
+            return Ok(Some(Box::new(ids.into_iter().map(|i| Ok(i)))));
         }
     }
-}*/
+
+    fn matches(&self, doc: &Doc) -> bool {
+        match doc.get(&self.field) {
+            Some(&FieldValue::String(ref val)) => {
+                let doc_vals = self
+                    .analyzer
+                    .analyze(val)
+                    .map(|c| c.to_string())
+                    .collect::<Vec<String>>();
+                doc_vals
+                    .windows(self.values.len())
+                    .find(|t| t == &self.values.as_slice())
+                    .is_some()
+            }
+            None => false,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct MatchAllDocsQuery;

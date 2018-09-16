@@ -29,6 +29,7 @@ use esmy::search::AllQuery;
 use esmy::search::MatchAllDocsQuery;
 use esmy::search::Query;
 use esmy::search::TermQuery;
+use esmy::search::TextQuery;
 use esmy::search::ValueQuery;
 use esmy::seg::Feature;
 use esmy::seg::SegmentSchema;
@@ -65,6 +66,15 @@ proptest! {
 
     #[test]
     fn term_query_wiki_body_matching((ref ops, ref queries) in op_and_term_queries(0..10, 0..50, 0..100, "text".to_owned(), Box::new(UAX29Analyzer::new()))) {
+        let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
+        features.insert("1".to_string(), Box::new(StringIndex::new("text".to_string(), Box::from(UAX29Analyzer{}))));
+        features.insert("f".to_string(), Box::new(FullDoc::new()));
+        let schema = SegmentSchema {features};
+        index_and_assert_search_matches(&schema, ops, queries);
+    }
+
+    #[test]
+    fn text_query_wiki_body_matching((ref ops, ref queries) in op_and_text_queries(0..10, 0..50, 0..100, "text".to_owned(), Box::new(UAX29Analyzer::new()))) {
         let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
         features.insert("1".to_string(), Box::new(StringIndex::new("text".to_string(), Box::from(UAX29Analyzer{}))));
         features.insert("f".to_string(), Box::new(FullDoc::new()));
@@ -175,6 +185,31 @@ fn op_and_term_queries(
         }).boxed()
 }
 
+fn op_and_text_queries(
+    num_ops: impl Into<SizeRange>,
+    num_docs: impl Into<SizeRange>,
+    num_queries: impl Into<SizeRange>,
+    field: String,
+    analyzer: Box<dyn Analyzer>,
+) -> BoxedStrategy<(Vec<IndexOperation>, Vec<Box<Query>>)> {
+    let num_queries: SizeRange = num_queries.into();
+    vec(arb_index_op(num_docs), num_ops)
+        .prop_flat_map(move |ops| {
+            let num_queries = num_queries.clone();
+            let token_ngrams = extract_token_ngrams(&ops, &field, &*analyzer, 3);
+            if token_ngrams.len() > 0 {
+                vec(
+                    text_query(field.to_owned(), analyzer.clone(), token_ngrams.clone()),
+                    num_queries,
+                ).prop_map(move |queries| (ops.clone(), queries))
+                .boxed()
+            } else {
+                let vec: Vec<Box<Query>> = Vec::new();
+                Just((ops.clone(), vec)).boxed()
+            }
+        }).boxed()
+}
+
 fn op_and_match_all_queries(
     num_ops: impl Into<SizeRange>,
     num_docs: impl Into<SizeRange>,
@@ -237,6 +272,22 @@ fn term_query(
         }).boxed()
 }
 
+fn text_query(
+    field_name: String,
+    analyzer: Box<dyn Analyzer>,
+    token_ngrams: Vec<Vec<String>>,
+) -> BoxedStrategy<Box<Query>> {
+    (0..token_ngrams.len())
+        .prop_map(move |i| {
+            let ngram = &token_ngrams[i];
+            Box::new(TextQuery::new(
+                field_name.to_owned(),
+                ngram.join(" ").clone(),
+                analyzer.clone(),
+            )) as Box<Query>
+        }).boxed()
+}
+
 fn all_queries(
     field_name: String,
     analyzer: Box<dyn Analyzer>,
@@ -268,6 +319,26 @@ enum IndexOperation {
     Index(Vec<Doc>),
     Commit,
     Merge,
+}
+
+fn extract_token_ngrams(
+    ops: &[IndexOperation],
+    field_name: &str,
+    analyzer: &Analyzer,
+    ngram_size: usize,
+) -> Vec<Vec<String>> {
+    let values = extract_values(ops, field_name);
+    let mut ngrams = HashSet::new();
+    for v in values {
+        let tokens = analyzer
+            .analyze(&v)
+            .map(|c| c.to_string())
+            .collect::<Vec<String>>();
+        for ngram in tokens.windows(ngram_size) {
+            ngrams.insert(ngram.to_vec());
+        }
+    }
+    ngrams.into_iter().collect()
 }
 
 fn extract_terms(ops: &[IndexOperation], field_name: &str, analyzer: &Analyzer) -> Vec<String> {
@@ -349,9 +420,15 @@ impl IndexTestState {
 
 fn assert_same_docs(expected: &[Doc], actual: &[Doc]) {
     for doc in actual {
-        assert!(expected.contains(doc), "Expected = {} did not contain {}")
+        assert!(
+            expected.contains(doc),
+            format!("Expected = {:?} did not contain {:?}", expected, doc)
+        )
     }
     for doc in expected {
-        assert!(actual.contains(doc), "Actual = {} did not contain {}")
+        assert!(
+            actual.contains(doc),
+            format!("Actual = {:?} did not contain {:?}", actual, doc)
+        )
     }
 }
