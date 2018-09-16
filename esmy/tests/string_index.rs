@@ -127,7 +127,7 @@ fn index_and_assert_search_matches(
     index_dir.close().unwrap();
 }
 
-static COMPRESSED_JSON_WIKI_DOCS: &[u8] = include_bytes!("50k_wiki_docs.json.gz");
+static COMPRESSED_JSON_WIKI_DOCS: &[u8] = include_bytes!("../../data/50k_wiki_docs.json.gz");
 lazy_static! {
     static ref WIKI_DOCS: Vec<Doc> = {
         let compressed = flate2::read::GzDecoder::new(COMPRESSED_JSON_WIKI_DOCS);
