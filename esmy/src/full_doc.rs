@@ -70,18 +70,18 @@ impl Feature for FullDoc {
         let mut doc_offsets = BufWriter::new(File::create(address.with_ending("fdo"))?);
         let mut doc_buf_writer = File::create(address.with_ending("fdv"))?;
         let mut writer =
-            ::flate2::write::GzEncoder::new(doc_buf_writer, ::flate2::Compression::default());
+            ::flate2::write::DeflateEncoder::new(doc_buf_writer, ::flate2::Compression::default());
         let mut block_offset = 0;
         for doc in docs {
             doc_offsets.write_u64::<BigEndian>(Offsets::new(file_offset, block_offset))?;
             doc.serialize(&mut rmps::Serializer::new(&mut writer))
                 .unwrap();
             block_offset += 1;
-            if block_offset % 4096 == 0 {
+            if writer.total_out() > 16384 || block_offset % 4096 == 0 {
                 doc_buf_writer = writer.finish()?;
                 doc_buf_writer.flush()?;
                 file_offset = doc_buf_writer.seek(SeekFrom::Current(0))?;
-                writer = ::flate2::write::GzEncoder::new(
+                writer = ::flate2::write::DeflateEncoder::new(
                     doc_buf_writer,
                     ::flate2::Compression::default(),
                 );
@@ -160,7 +160,7 @@ pub struct FullDocCursor {
     offsets_file: File,
     deserializer: Option<
         ::rmps::Deserializer<
-            ::rmps::decode::ReadReader<::flate2::bufread::GzDecoder<BufReader<File>>>,
+            ::rmps::decode::ReadReader<::flate2::bufread::DeflateDecoder<BufReader<File>>>,
         >,
     >,
 }
@@ -172,7 +172,7 @@ impl FullDocCursor {
             next_doc: 0,
             offsets_file: File::open(address.with_ending("fdo"))?,
             deserializer: Some(::rmps::Deserializer::new(
-                ::flate2::bufread::GzDecoder::new(BufReader::new(File::open(
+                ::flate2::bufread::DeflateDecoder::new(BufReader::new(File::open(
                     address.with_ending("fdv"),
                 )?)),
             )),
@@ -187,7 +187,7 @@ impl FullDocCursor {
             let mut file = old_deser.unwrap().into_inner().into_inner().into_inner();
             file.seek(SeekFrom::Start(offsets.file_offset()))?;
             self.deserializer = Some(::rmps::Deserializer::new(
-                ::flate2::bufread::GzDecoder::new(BufReader::new(file)),
+                ::flate2::bufread::DeflateDecoder::new(BufReader::new(file)),
             ));
             self.next_doc = 0;
             self.curr_block = offsets.file_offset();
