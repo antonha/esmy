@@ -4,7 +4,7 @@ use esmy::full_doc::FullDocCursor;
 use esmy::index::IndexBuilder;
 use esmy::search;
 use esmy::search::Collector;
-use esmy::search::TermQuery;
+use esmy::search::TextQuery;
 use esmy::seg::SegmentReader;
 use esmy::Error;
 use serde_json;
@@ -49,9 +49,9 @@ pub fn run(argv: &[&str]) -> Result<(), Error> {
     Ok(())
 }
 
-fn parse_query<'a>(query_string: &'a str, analyzer: Box<Analyzer>) -> TermQuery {
+fn parse_query<'a>(query_string: &'a str, analyzer: Box<Analyzer>) -> TextQuery {
     let split: Vec<&str> = query_string.split(":").collect();
-    TermQuery::new(split[0].to_string(), split[1].to_string(), analyzer)
+    TextQuery::new(split[0].to_string(), split[1].to_string(), analyzer)
 }
 
 struct PrintAllCollector {
