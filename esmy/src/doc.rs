@@ -11,6 +11,7 @@ pub enum FieldValue {
     String(String),
 }
 
+pub type DocId = u64;
 pub type Doc = HashMap<String, FieldValue>;
 
 impl<'a> Serialize for FieldValue {

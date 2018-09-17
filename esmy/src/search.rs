@@ -2,7 +2,12 @@ use super::Error;
 use analyzis::Analyzer;
 use analyzis::NoopAnalyzer;
 use doc::Doc;
+use doc::DocId;
 use doc::FieldValue;
+use doc_iter::AllDocIter;
+use doc_iter::AllDocsDocIter;
+use doc_iter::DocIter;
+use doc_iter::VecDocIter;
 use full_doc::FullDocCursor;
 use index::ManagedIndexReader;
 use seg::SegmentReader;
@@ -16,9 +21,11 @@ pub fn search(
     for segment_reader in index_reader.segment_readers() {
         collector.set_reader(segment_reader)?;
         match query.segment_matches(&segment_reader)? {
-            Some(disi) => for doc in disi {
-                collector.collect(doc?)?;
-            },
+            Some(mut disi) => {
+                while let Some(doc_id) = disi.next_doc()? {
+                    collector.collect(doc_id)?;
+                }
+            }
             None => (),
         };
     }
@@ -26,18 +33,12 @@ pub fn search(
 }
 
 pub trait Query: QueryClone + Debug {
-    fn segment_matches(
-        &self,
-        reader: &SegmentReader,
-    ) -> Result<Option<Box<Iterator<Item = Result<u64, Error>>>>, Error>;
+    fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<DocIter>>, Error>;
     fn matches(&self, doc: &Doc) -> bool;
 }
 
 impl Query for Box<Query> {
-    fn segment_matches(
-        &self,
-        reader: &SegmentReader,
-    ) -> Result<Option<Box<Iterator<Item = Result<u64, Error>>>>, Error> {
+    fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<DocIter>>, Error> {
         self.as_ref().segment_matches(reader)
     }
 
@@ -78,10 +79,7 @@ impl<'a> ValueQuery {
 }
 
 impl<'a> Query for ValueQuery {
-    fn segment_matches(
-        &self,
-        reader: &SegmentReader,
-    ) -> Result<Option<Box<Iterator<Item = Result<u64, Error>>>>, Error> {
+    fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<DocIter>>, Error> {
         match reader.string_index(&self.field, &NoopAnalyzer) {
             Some(index) => match index.doc_iter(&self.value)? {
                 Some(iter) => Ok(Some(Box::from(iter))),
@@ -117,10 +115,7 @@ impl TermQuery {
 }
 
 impl Query for TermQuery {
-    fn segment_matches(
-        &self,
-        reader: &SegmentReader,
-    ) -> Result<Option<Box<Iterator<Item = Result<u64, Error>>>>, Error> {
+    fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<DocIter>>, Error> {
         match reader.string_index(&self.field, &*self.analyzer) {
             Some(index) => match index.doc_iter(&self.value)? {
                 Some(iter) => Ok(Some(Box::from(iter))),
@@ -164,10 +159,7 @@ impl TextQuery {
 }
 
 impl Query for TextQuery {
-    fn segment_matches(
-        &self,
-        reader: &SegmentReader,
-    ) -> Result<Option<Box<Iterator<Item = Result<u64, Error>>>>, Error> {
+    fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<DocIter>>, Error> {
         if self.values.len() == 1 {
             let index = reader.string_index(&self.field, &*self.analyzer).unwrap();
             match index.doc_iter(&self.values[0])? {
@@ -175,8 +167,7 @@ impl Query for TextQuery {
                 None => Ok(None),
             }
         } else {
-            let mut sub: Vec<Box<Iterator<Item = Result<u64, Error>>>> =
-                Vec::with_capacity(self.values.len());
+            let mut sub: Vec<Box<DocIter>> = Vec::with_capacity(self.values.len());
             let index = reader.string_index(&self.field, &*self.analyzer).unwrap();
             for q in &self.values {
                 match index.doc_iter(&q)? {
@@ -186,14 +177,14 @@ impl Query for TextQuery {
             }
 
             let mut full_doc = reader.full_doc().unwrap().cursor()?;
-            let mut ids: Vec<u64> = Vec::new();
-            for doc_res in (AllIterator { sub }) {
-                let doc_id = doc_res?;
+            let mut ids: Vec<DocId> = Vec::new();
+            let mut all_iter = AllDocIter::new(sub);
+            while let Some(doc_id) = all_iter.next_doc()? {
                 if self.matches(&full_doc.read_doc(doc_id)?) {
                     ids.push(doc_id);
                 }
             }
-            return Ok(Some(Box::new(ids.into_iter().map(|i| Ok(i)))));
+            return Ok(Some(Box::new(VecDocIter::new(ids))));
         }
     }
 
@@ -228,8 +219,8 @@ impl Query for MatchAllDocsQuery {
     fn segment_matches(
         &self,
         reader: &SegmentReader,
-    ) -> Result<Option<Box<Iterator<Item = Result<u64, Error>>>>, Error> {
-        Ok(Some(Box::new((0..reader.info().doc_count).map(|i| Ok(i)))))
+    ) -> Result<Option<Box<DocIter>>, Error> {
+        Ok(Some(Box::new(AllDocsDocIter::new(reader.info().doc_count))))
     }
 
     fn matches(&self, _doc: &Doc) -> bool {
@@ -252,8 +243,8 @@ impl Query for AllQuery {
     fn segment_matches(
         &self,
         reader: &SegmentReader,
-    ) -> Result<Option<Box<Iterator<Item = Result<u64, Error>>>>, Error> {
-        let mut sub: Vec<Box<Iterator<Item = Result<u64, Error>>>> =
+    ) -> Result<Option<Box<DocIter>>, Error> {
+        let mut sub: Vec<Box<DocIter>> =
             Vec::with_capacity(self.queries.len());
         for q in &self.queries {
             match q.segment_matches(reader)? {
@@ -261,7 +252,7 @@ impl Query for AllQuery {
                 None => return Ok(None),
             }
         }
-        return Ok(Some(Box::new(AllIterator { sub })));
+        return Ok(Some(Box::new(AllDocIter::new(sub))));
     }
 
     fn matches(&self, doc: &Doc) -> bool {
@@ -271,82 +262,6 @@ impl Query for AllQuery {
             }
         }
         return true;
-    }
-}
-
-struct AllIterator {
-    sub: Vec<Box<Iterator<Item = Result<u64, Error>>>>,
-}
-
-impl Iterator for AllIterator {
-    type Item = Result<u64, Error>;
-    fn next(&mut self) -> Option<Self::Item> {
-        let size = self.sub.len();
-
-        let mut target = {
-            let s = &mut self.sub[0];
-            match s.next() {
-                Some(res) => match res {
-                    Ok(t) => t,
-                    Err(e) => return Some(Err(e)),
-                },
-                None => return None,
-            }
-        };
-
-        let mut i = 0usize;
-        let mut skip = 0usize;
-        while i < size {
-            if i != skip {
-                let s = &mut self.sub[i];
-                match advance(s, target) {
-                    Some(r) => {
-                        if let Err(e) = r {
-                            return Some(Err(e));
-                        }
-                        let sub_doc_id = r.unwrap();
-                        if sub_doc_id > target {
-                            target = sub_doc_id;
-                            if i != 0 {
-                                skip = i;
-                                i = 0;
-                                continue;
-                            } else {
-                                skip = 0;
-                            }
-                        }
-                    }
-                    None => return None,
-                }
-            }
-            i += 1;
-        }
-        return Some(Ok(target));
-    }
-}
-
-fn advance(
-    iter: &mut Iterator<Item = Result<u64, Error>>,
-    target: u64,
-) -> Option<Result<u64, Error>> {
-    loop {
-        let next = iter.next();
-        match next {
-            Some(res) => {
-                if let Ok(n) = res {
-                    if n < target {
-                        continue;
-                    } else {
-                        return Some(Ok(n));
-                    }
-                } else {
-                    return Some(res);
-                }
-            }
-            None => {
-                return None;
-            }
-        }
     }
 }
 
@@ -374,7 +289,7 @@ impl Collector for CountCollector {
         Ok(())
     }
 
-    fn collect(&mut self, _doc_id: u64) -> Result<(), Error> {
+    fn collect(&mut self, _doc_id: DocId) -> Result<(), Error> {
         self.count += 1;
         Ok(())
     }
@@ -404,7 +319,7 @@ impl Collector for AllDocsCollector {
         Ok(())
     }
 
-    fn collect(&mut self, doc_id: u64) -> Result<(), Error> {
+    fn collect(&mut self, doc_id: DocId) -> Result<(), Error> {
         match &mut self.doc_cursor {
             Some(curs) => {
                 let doc = curs.read_doc(doc_id)?;

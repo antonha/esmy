@@ -20,6 +20,7 @@ extern crate proptest;
 
 pub mod analyzis;
 pub mod doc;
+pub mod doc_iter;
 pub mod error;
 pub mod full_doc;
 pub mod index;

@@ -3,7 +3,9 @@ use analyzis::NoopAnalyzer;
 use analyzis::UAX29Analyzer;
 use analyzis::WhiteSpaceAnalyzer;
 use doc::Doc;
+use doc::DocId;
 use doc::FieldValue;
+use doc_iter::DocIter;
 use error::Error;
 use fst::map::OpBuilder;
 use fst::{self, Map, MapBuilder, Streamer};
@@ -192,7 +194,7 @@ impl FeatureReader for StringIndexReader {
 }
 
 impl StringIndexReader {
-    pub fn doc_iter(&self, term: &str) -> Result<Option<DocIter>, Error> {
+    pub fn doc_iter(&self, term: &str) -> Result<Option<TermDocIter>, Error> {
         let maybe_offset = self.term_offset(term)?;
         match maybe_offset {
             None => Ok(None),
@@ -201,9 +203,10 @@ impl StringIndexReader {
                     BufReader::new(File::open(self.address.with_ending(ID_DOC_LISTING))?);
                 iddoc.seek(SeekFrom::Start(offset as u64))?;
                 let num = read_vint(&mut iddoc)?;
-                Ok(Some(DocIter {
+                Ok(Some(TermDocIter {
                     file: iddoc,
-                    last_doc_id: 0,
+                    current_doc_id: 0,
+                    finished: false,
                     left: num,
                 }))
             }
@@ -218,26 +221,35 @@ impl StringIndexReader {
     }
 }
 
-pub struct DocIter {
+pub struct TermDocIter {
     file: BufReader<File>,
-    last_doc_id: u64,
+    current_doc_id: DocId,
+    finished: bool,
     left: u64,
 }
 
-impl Iterator for DocIter {
-    type Item = Result<u64, Error>;
-    fn next(&mut self) -> Option<Self::Item> {
+impl DocIter for TermDocIter {
+    fn current_doc(&self) -> Option<DocId> {
+        if self.finished {
+            None
+        } else {
+            Some(self.current_doc_id)
+        }
+    }
+
+    fn next_doc(&mut self) -> Result<Option<DocId>, Error> {
         if self.left != 0 {
             self.left -= 1;
-            Some(match read_vint(&mut self.file) {
+            match read_vint(&mut self.file) {
                 Ok(diff) => {
-                    self.last_doc_id += diff;
-                    Ok(self.last_doc_id)
+                    self.current_doc_id += diff;
+                    Ok(Some(self.current_doc_id))
                 }
                 Err(e) => Err(Error::from(e)),
-            })
+            }
         } else {
-            None
+            self.finished = true;
+            Ok(None)
         }
     }
 }
