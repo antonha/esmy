@@ -321,7 +321,8 @@ fn arb_index_op(num_docs: impl Into<SizeRange>) -> BoxedStrategy<IndexOperation>
     prop_oneof![
         vec(arb_doc(), num_docs).prop_map(IndexOperation::Index),
         Just(IndexOperation::Commit),
-        Just(IndexOperation::Merge)
+        Just(IndexOperation::Merge),
+        Just(IndexOperation::ForceMerge)
     ].boxed()
 }
 
