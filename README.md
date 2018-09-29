@@ -1,5 +1,6 @@
 # Esmy
 [![Build status](https://travis-ci.org/antonha/esmy.svg?branch=master)](https://travis-ci.org/antonha/esmy)
+
 Esmy is a library for full text search, written in Rust. It is inspired by Lucene, but aims to be more flexible.
 
 ## Features
