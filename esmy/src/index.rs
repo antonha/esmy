@@ -4,6 +4,9 @@ use rand;
 use rand::Rng;
 use rayon::prelude::*;
 use rmps;
+use search;
+use search::Collector;
+use search::Query;
 use seg;
 use seg::write_seg;
 use seg::FeatureMeta;
@@ -390,6 +393,10 @@ pub struct ManagedIndexReader {
 impl ManagedIndexReader {
     pub fn segment_readers(&self) -> &[SegmentReader] {
         &self.readers
+    }
+
+    pub fn search(&self, query: &impl Query, collector: &mut Collector) -> Result<(), Error> {
+        search::search(self, query, collector)
     }
 }
 

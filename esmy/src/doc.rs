@@ -13,6 +13,24 @@ pub enum FieldValue {
 
 pub type Doc = HashMap<String, FieldValue>;
 
+pub trait DocDecorator {
+    fn string_field<N, V>(self, name: N, value: V) -> Self
+    where
+        N: Into<String>,
+        V: Into<String>;
+}
+
+impl DocDecorator for Doc {
+    fn string_field<N, V>(mut self, name: N, value: V) -> Self
+    where
+        N: Into<String>,
+        V: Into<String>,
+    {
+        self.insert(name.into(), FieldValue::String(value.into()));
+        self
+    }
+}
+
 impl<'a> Serialize for FieldValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

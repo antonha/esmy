@@ -148,13 +148,19 @@ pub struct TextQuery {
 }
 
 impl TextQuery {
-    pub fn new(field: String, value: String, analyzer: Box<Analyzer>) -> TextQuery {
-        TextQuery {
-            field: field,
-            values: analyzer
-                .analyze(&value)
+    pub fn new<N, V>(field: N, value: V, analyzer: Box<Analyzer>) -> TextQuery
+    where
+        N: Into<String>,
+        V: Into<String>
+    {
+        let v = value.into();
+        let values = analyzer
+                .analyze(&v)
                 .map(|c| c.to_string())
-                .collect::<Vec<String>>(),
+                .collect::<Vec<String>>();
+        TextQuery {
+            field: field.into(),
+            values,
             analyzer,
         }
     }
