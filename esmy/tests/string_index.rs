@@ -104,18 +104,31 @@ proptest! {
 
 #[test]
 fn text_query_wiki_body_matching_pos_index_1() {
+
+    /*
+     *  ([Index([{"t
+itle": String("Pergalumna bellesii"), "text": String("Pergalumna bellesii\n\nPergalumna bellesii är en kvalsterart som beskrevs av Pérez-Íñigo och Baggio 1997.
+ \"Pergalumna bellesii\" ingår i släktet \"Pergalumna\" och familjen Galumnidae. Inga underarter finns listade i Catalogue of Life.\n"), "id": String("2266530"
+), "url": String("https://sv.wikipedia.org/wiki?curid=2266530")}, {"id": String("14949267"), "text": String("Bonkers (2007 TV series)\n\nBonkers is a UK televi
+sion series written by Sally Wainwright and starring Liza Tarbuck. It was transmitted on ITV during 2007. It was also released on DVD.\nThis series is availabl
+e on DVD, distributed by Acorn Media UK.\n\nIn July 2007, the playwright and actress Tricia Walsh-Smith filed a claim in the High Court for breach of copyright
+, claiming that the pilot episode was copied from her 1987 play, also called \"Bonkers\".\n"), "title": String("Bonkers (2007 TV series)"), "url": String("http
+s://en.wikipedia.org/wiki?curid=14949267")}, {"id": String("399700"), "text": String("마쓰다이라 노부히데\n\n마쓰다이라 노부히데(, 1813년 3월 27일 ~ 1865년 12
+월 6일)는 단바 가메야마 번의 제6대 번주로, 이이 나오스케의 장인이다.\n\n1813년 3월 27일(분카 10년 2월 25일), 제5대 번주 마쓰다이라 노부유키의 7남으로 태어났다. 태어난 해가 1814년(분카 11년)이라는 설도 있다.\n\n1816년(분카 13년), 아버지의 죽음으로 가독을 이어 제6대 번주가 된다. 1827년(분세이 10년 12월), 종5위하 기이노카미(紀伊守)에 서임된다. 번정에서는 가신과 영민의 교육화, 번교의 확장 등에 힘썼다.\n\n1843년 3월 9일(덴포 14년 2월 9일), 양자 마쓰다이라 노부요시에게 가독을 양도하고 은거한다. 1865년 12월 6일(게이오 원년 10월 19일, 혹은 10월 27일)에 죽었다. 향년 53세.\n"), "url": String("https://ko.wikipedia.org/wiki?curid=399700"), "title": String("마쓰다이라 노부히데")}]), Commit, Merge], [TextQuery { field: "text", values: [".", "1827년"], analyzer: UAX29Analyzer }])*/
     let mut doc1 = Doc::new();
-    doc1.insert("text".to_string(), FieldValue::String("cats in the cradle".to_string()));
+    doc1.insert("text".to_string(), FieldValue::String("Pergalumna bellesii\n\nPergalumna bellesii är en kvalsterart som beskrevs av Pérez-Íñigo och Baggio 1997. \"Pergalumna bellesii\" ingår i släktet \"Pergalumna\" och familjen Galumnidae. Inga underarter finns listade i Catalogue of Life.\n".to_string()));
     let mut doc2 = Doc::new();
-    doc2.insert("text".to_string(), FieldValue::String("cats in the cradle for once".to_string()));
+    doc2.insert("text".to_string(), FieldValue::String("Bonkers (2007 TV series)\n\nBonkers is a UK televi
+sion series written by Sally Wainwright and starring Liza Tarbuck. It was transmitted on ITV during 2007. It was also released on DVD.\nThis series is available on DVD, distributed by Acorn Media UK.\n\nIn July 2007, the playwright and actress Tricia Walsh-Smith filed a claim in the High Court for breach of copyright, claiming that the pilot episode was copied from her 1987 play, also called \"Bonkers\".\n".to_string()));
+
+    let mut doc3 = Doc::new();
+    doc3.insert("text".to_string(), FieldValue::String("마쓰다이라 노부히데\n\n마쓰다이라 노부히데(, 1813년 3월 27일 ~ 1865년 12월 6일)는 단바 가메야마 번의 제6대 번주로, 이이 나오스케의 장인이다.\n\n1813년 3월 27일(분카 10년 2월 25일), 제5대 번주 마쓰다이라 노부유키의 7남으로 태어났다. 태어난 해가 1814년(분카 11년)이라는 설도 있다.\n\n1816년(분카 13년), 아버지의 죽음으로 가독을 이어 제6대 번주가 된다. 1827년(분세이 10년 12월), 종5위하 기이노카미(紀伊守)에 서임된다. 번정에서는 가신과 영민의 교육화, 번교의 확장 등에 힘썼다.\n\n1843년 3월 9일(덴포 14년 2월 9일), 양자 마쓰다이라 노부요시에게 가독을 양도하고 은거한다. 1865년 12월 6일(게이오 원년 10월 19일, 혹은 10월 27일)에 죽었다. 향년 53세.\n".to_string()));
     let ops = vec![
-        IndexOperation::Index(vec![doc1]),
-        IndexOperation::Commit,
-        IndexOperation::Index(vec![doc2]),
+        IndexOperation::Index(vec![doc1, doc2, doc3]),
         IndexOperation::Commit,
         IndexOperation::Merge
     ];
-    let queries = vec![Box::new(TextQuery::new("text".to_string(), "cats in".to_string(), Box::from(UAX29Analyzer::new()))) as Box<Query>];
+    let queries = vec![Box::new(TextQuery::new("text".to_string(), ". 1827년".to_string(), Box::from(UAX29Analyzer::new()))) as Box<Query>];
     let mut features: HashMap<String, Box<dyn Feature>> = HashMap::new();
     features.insert(
         "1".to_string(),

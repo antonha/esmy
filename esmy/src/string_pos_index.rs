@@ -299,7 +299,8 @@ impl DocSpansIter for TermDocSpansIter {
         if self.pos_left == 0 {
             return Ok(None);
         }
-        self.current_pos += read_vint(&mut self.pos_file)?;
+        let pos_diff = read_vint(&mut self.pos_file)?;
+        self.current_pos += pos_diff;
         self.pos_left -= 1;
         return Ok(Some(self.current_pos));
     }
@@ -387,7 +388,8 @@ where
                 let pos_offset_to_write = positions_offset - last_written_pos_offset;
                 postings_offset += write_vint(&mut target_postings, pos_offset_to_write)? as u64;
                 last_read_pos_offset = read_position_offset;
-                last_written_pos_offset = pos_offset_to_write;
+                last_written_pos_offset = positions_offset;
+
 
                 let num_positions = read_vint(source_position)?;
                 positions_offset += write_vint(&mut target_positions, num_positions)? as u64;
