@@ -27,5 +27,9 @@ pub mod index;
 pub mod search;
 pub mod seg;
 pub mod string_index;
+pub mod string_pos_index;
 mod util;
 pub use error::Error;
+
+pub type DocId = u64;
+pub use doc::Doc;

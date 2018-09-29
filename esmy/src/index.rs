@@ -371,7 +371,8 @@ struct MergeSpec {
     to_merge: Vec<Vec<SegmentInfo>>,
 }
 
-fn find_merges(mut segments_in: Vec<SegmentInfo>) -> MergeSpec {
+fn find_merges(segments_in: Vec<SegmentInfo>) -> MergeSpec {
+    /*
     segments_in.sort_by(|a, b| a.doc_count.cmp(&b.doc_count).reverse());
     let mut queue = ::std::collections::VecDeque::from(segments_in);
     let mut to_merge: Vec<Vec<SegmentInfo>> = Vec::new();
@@ -398,6 +399,6 @@ fn find_merges(mut segments_in: Vec<SegmentInfo>) -> MergeSpec {
         if stage.len() >= 3 {
             to_merge.push(stage);
         }
-    }
-    return MergeSpec { to_merge };
+    }*/
+    return MergeSpec { to_merge: vec![segments_in] };
 }

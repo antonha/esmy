@@ -32,6 +32,7 @@ use esmy::search::ValueQuery;
 use esmy::seg::Feature;
 use esmy::seg::SegmentSchema;
 use esmy::string_index::StringIndex;
+use esmy::string_pos_index::StringPosIndex;
 use proptest::collection::vec;
 use proptest::collection::SizeRange;
 use proptest::prelude::*;
@@ -81,6 +82,17 @@ proptest! {
     }
 
     #[test]
+    fn text_query_wiki_body_matching_pos_index((ref ops, ref queries) in op_and_text_queries(0..10, 0..50, 0..100, "text".to_owned(), Box::new(UAX29Analyzer::new()))) {
+        let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
+        features.insert("1".to_string(), Box::new(StringPosIndex::new("text".to_string(), Box::from(UAX29Analyzer{}))));
+        features.insert("f".to_string(), Box::new(FullDoc::new()));
+        let schema = SegmentSchema {features};
+        index_and_assert_search_matches(&schema, ops, queries);
+    }
+
+
+
+    #[test]
     fn all_query_wiki_body_matching((ref ops, ref queries) in op_and_all_queries(0..10, 0..50, 0..100, "text".to_owned(), Box::new(UAX29Analyzer::new()))) {
         let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
         features.insert("1".to_string(), Box::new(StringIndex::new("text".to_string(), Box::from(UAX29Analyzer{}))));
@@ -88,6 +100,33 @@ proptest! {
         let schema = SegmentSchema {features};
         index_and_assert_search_matches(&schema, ops, queries);
     }
+}
+
+#[test]
+fn text_query_wiki_body_matching_pos_index_1() {
+    let mut doc1 = Doc::new();
+    doc1.insert("text".to_string(), FieldValue::String("cats in the cradle".to_string()));
+    let mut doc2 = Doc::new();
+    doc2.insert("text".to_string(), FieldValue::String("cats in the cradle for once".to_string()));
+    let ops = vec![
+        IndexOperation::Index(vec![doc1]),
+        IndexOperation::Commit,
+        IndexOperation::Index(vec![doc2]),
+        IndexOperation::Commit,
+        IndexOperation::Merge
+    ];
+    let queries = vec![Box::new(TextQuery::new("text".to_string(), "cats in".to_string(), Box::from(UAX29Analyzer::new()))) as Box<Query>];
+    let mut features: HashMap<String, Box<dyn Feature>> = HashMap::new();
+    features.insert(
+        "1".to_string(),
+        Box::new(StringPosIndex::new(
+            "text".to_string(),
+            Box::from(UAX29Analyzer {}),
+        )),
+    );
+    features.insert("f".to_string(), Box::new(FullDoc::new()));
+    let schema = SegmentSchema { features };
+    index_and_assert_search_matches(&schema, &ops, &queries);
 }
 
 proptest! {
@@ -194,17 +233,24 @@ fn op_and_text_queries(
     vec(arb_index_op(num_docs), num_ops)
         .prop_flat_map(move |ops| {
             let num_queries = num_queries.clone();
-            let token_ngrams = extract_token_ngrams(&ops, &field, &*analyzer, 3);
-            if token_ngrams.len() > 0 {
-                vec(
-                    text_query(field.to_owned(), analyzer.clone(), token_ngrams.clone()),
-                    num_queries,
-                ).prop_map(move |queries| (ops.clone(), queries))
-                .boxed()
-            } else {
-                let vec: Vec<Box<Query>> = Vec::new();
-                Just((ops.clone(), vec)).boxed()
-            }
+            let field = field.clone();
+            let analyzer = analyzer.clone();
+            (1usize..4usize)
+                .prop_flat_map(move |ngram_length| {
+                    let ops = ops.clone();
+                    let num_queries = num_queries.clone();
+                    let token_ngrams = extract_token_ngrams(&ops, &field, &*analyzer, ngram_length);
+                    if token_ngrams.len() > 0 {
+                        vec(
+                            text_query(field.to_owned(), analyzer.clone(), token_ngrams.clone()),
+                            num_queries,
+                        ).prop_map(move |queries| (ops.clone(), queries))
+                        .boxed()
+                    } else {
+                        let vec: Vec<Box<Query>> = Vec::new();
+                        Just((ops.clone(), vec)).boxed()
+                    }
+                }).boxed()
         }).boxed()
 }
 

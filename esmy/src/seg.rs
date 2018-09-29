@@ -12,6 +12,8 @@ use std::io;
 use std::path::PathBuf;
 use string_index::StringIndex;
 use string_index::StringIndexReader;
+use string_pos_index::StringPosIndex;
+use string_pos_index::StringPosIndexReader;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(untagged)]
@@ -165,6 +167,7 @@ pub fn schema_from_metas(feature_metas: HashMap<String, FeatureMeta>) -> Segment
         let feature: Box<Feature> = match feature_meta.ftype.as_ref() {
             "full_doc" => Box::new(FullDoc::from_config(feature_meta.config)),
             "string_index" => Box::new(StringIndex::from_config(feature_meta.config)),
+            "string_pos_index" => Box::new(StringPosIndex::from_config(feature_meta.config)),
             //TODO error handling
             _ => panic!("No such feature"),
         };
@@ -279,6 +282,7 @@ pub fn merge(
             let feature: Box<Feature> = match feature_meta.ftype.as_ref() {
                 "full_doc" => Box::new(FullDoc::from_config(feature_meta.config)),
                 "string_index" => Box::new(StringIndex::from_config(feature_meta.config)),
+                "string_pos_index" => Box::new(StringPosIndex::from_config(feature_meta.config)),
                 //TODO error handling
                 _ => panic!("No such feature"),
             };
@@ -368,6 +372,26 @@ impl SegmentReader {
     ) -> Option<&StringIndexReader> {
         for reader in self.readers.values() {
             match reader.as_any().downcast_ref::<StringIndexReader>() {
+                Some(reader) => {
+                    if reader.feature.field_name == field_name
+                        && analyzer.analyzer_type() == reader.feature.analyzer.analyzer_type()
+                    {
+                        return Some(reader);
+                    }
+                }
+                None => (),
+            }
+        }
+        return None;
+    }
+
+    pub fn string_pos_index(
+        &self,
+        field_name: &str,
+        analyzer: &Analyzer,
+    ) -> Option<&StringPosIndexReader> {
+        for reader in self.readers.values() {
+            match reader.as_any().downcast_ref::<StringPosIndexReader>() {
                 Some(reader) => {
                     if reader.feature.field_name == field_name
                         && analyzer.analyzer_type() == reader.feature.analyzer.analyzer_type()
