@@ -72,6 +72,7 @@ extern crate unicode_segmentation;
 extern crate walkdir;
 
 extern crate rayon;
+extern crate num_cpus;
 
 extern crate rmp_serde as rmps;
 extern crate serde;
@@ -84,6 +85,9 @@ extern crate flate2;
 #[cfg(test)]
 #[macro_use]
 extern crate proptest;
+
+#[macro_use]
+extern crate lazy_static;
 
 pub mod analyzis;
 pub mod doc;

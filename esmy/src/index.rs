@@ -198,6 +198,11 @@ struct Indexer {
     state: Arc<RwLock<IndexState>>,
 }
 
+use num_cpus;
+lazy_static! {
+    static ref NUM_CPUS: usize = num_cpus::get();
+}
+
 impl Indexer {
     fn start(
         path: PathBuf,
@@ -256,7 +261,7 @@ impl Indexer {
         //TODO long-term goal here is to add to some transaction log instead of just adding to in-memory
         let mut local_state = self.state.write().unwrap();
         local_state.docs_to_index.push(doc);
-        let should_commit = self.options.auto_commit && local_state.docs_to_index.len() >= 200;
+        let should_commit = self.options.auto_commit && local_state.docs_to_index.len() >= 10_000;
         if should_commit {
             let docs = mem::replace(&mut local_state.docs_to_index, Vec::new());
             drop(local_state);
@@ -285,7 +290,7 @@ impl Indexer {
         if docs.len() <= 1000 {
             self.try_commit(&docs)?;
         } else {
-            docs.par_chunks(1000)
+            docs.par_chunks(docs.len() / *NUM_CPUS)
                 .try_for_each(|chunk| self.try_commit(&chunk))?;
         };
         if self.options.auto_merge {
@@ -320,9 +325,9 @@ impl Indexer {
             .map(|item| item.info.clone())
             .collect();
         let to_merge = if force {
-            find_merges(infos).to_merge
-        } else {
             vec![infos]
+        } else {
+            find_merges(infos).to_merge
         };
         for stage in &to_merge {
             for seg in stage {
@@ -414,11 +419,11 @@ fn find_merges(mut segments_in: Vec<SegmentInfo>) -> MergeSpec {
             if !queue.is_empty() {
                 let is_in_stage = {
                     let info = queue.front().unwrap();
-                    first.doc_count < 5000 || info.doc_count as f64 > first.doc_count as f64 * 0.6
+                    info.doc_count as f64 > first.doc_count as f64 * 0.6
                 };
                 if is_in_stage {
                     stage.push(queue.pop_front().unwrap());
-                    if stage.len() >= 5 {
+                    if stage.len() > 20 {
                         break;
                     }
                 } else {
@@ -428,7 +433,7 @@ fn find_merges(mut segments_in: Vec<SegmentInfo>) -> MergeSpec {
                 break;
             }
         }
-        if stage.len() >= 3 {
+        if stage.len() >= 10 {
             to_merge.push(stage);
         }
     }

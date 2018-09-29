@@ -155,8 +155,7 @@ impl Feature for StringIndex {
             )?))?,
             BufWriter::new(File::create(new_segment.with_ending(&ID_DOC_LISTING))?),
         );
-        do_merge(&mut sources, target)?;
-        Ok(())
+        do_merge(&mut sources, target)
     }
 
     fn reader(&self, address: &FeatureAddress) -> Result<Box<FeatureReader>, Error> {
