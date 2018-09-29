@@ -14,7 +14,6 @@ extern crate esmy;
 
 use esmy::analyzis::UAX29Analyzer;
 use esmy::doc::Doc;
-use esmy::full_doc::FullDoc;
 use esmy::index::Index;
 use esmy::index::IndexBuilder;
 use esmy::search::search;
@@ -22,8 +21,6 @@ use esmy::search::CountCollector;
 use esmy::search::TextQuery;
 use esmy::seg::SegmentSchema;
 use esmy::seg::SegmentSchemaBuilder;
-use esmy::string_index::StringIndex;
-use esmy::string_pos_index::StringPosIndex;
 use esmy::Error;
 use tempfile::TempDir;
 use test::black_box;
@@ -33,11 +30,9 @@ use test::Bencher;
 fn search_phrases_with_string_index(b: &mut Bencher) {
     let analyzer = Box::new(UAX29Analyzer::new());
     let schema = SegmentSchemaBuilder::new()
-        .add_feature("full_doc", Box::new(FullDoc::new()))
-        .add_feature(
-            "text_string_index",
-            Box::new(StringIndex::new("text".to_string(), analyzer.clone())),
-        ).build();
+        .add_full_doc("full_doc")
+        .add_string_index("text_string_index", "text", analyzer.clone())
+        .build();
     let index = index_docs(schema).unwrap();
     let reader = index.open_reader().unwrap();
 
@@ -59,11 +54,9 @@ fn search_phrases_with_string_index(b: &mut Bencher) {
 fn search_phrases_with_string_pos_index(b: &mut Bencher) {
     let analyzer = Box::new(UAX29Analyzer::new());
     let schema = SegmentSchemaBuilder::new()
-        .add_feature("full_doc", Box::new(FullDoc::new()))
-        .add_feature(
-            "text_string_pos_index",
-            Box::new(StringPosIndex::new("text".to_string(), analyzer.clone())),
-        ).build();
+        .add_full_doc("full_doc")
+        .add_string_pos_index("text_string_pos_index", "text", analyzer.clone())
+        .build();
     let index = index_docs(schema).unwrap();
     let reader = index.open_reader().unwrap();
 
@@ -92,11 +85,7 @@ fn index_docs(schema: SegmentSchema) -> Result<Index, Error> {
         index.add_doc(d.clone())?;
     }
     index.commit()?;
-    index.merge()?;
-    index.merge()?;
-    index.merge()?;
-    index.merge()?;
-    index.merge()?;
+    index.force_merge()?;
     Ok(index)
 }
 

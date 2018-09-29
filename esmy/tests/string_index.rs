@@ -18,7 +18,6 @@ use esmy::analyzis::NoopAnalyzer;
 use esmy::analyzis::UAX29Analyzer;
 use esmy::doc::Doc;
 use esmy::doc::FieldValue;
-use esmy::full_doc::FullDoc;
 use esmy::index::Index;
 use esmy::index::IndexBuilder;
 use esmy::search::search;
@@ -29,15 +28,12 @@ use esmy::search::Query;
 use esmy::search::TermQuery;
 use esmy::search::TextQuery;
 use esmy::search::ValueQuery;
-use esmy::seg::Feature;
 use esmy::seg::SegmentSchema;
-use esmy::string_index::StringIndex;
-use esmy::string_pos_index::StringPosIndex;
+use esmy::seg::SegmentSchemaBuilder;
 use proptest::collection::vec;
 use proptest::collection::SizeRange;
 use proptest::prelude::*;
 use proptest::test_runner::Config;
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -47,57 +43,55 @@ proptest! {
     #![proptest_config(Config::with_cases(1000))]
     #[test]
     fn value_query_wiki_body_matching((ref ops, ref queries) in op_and_value_queries(0..10, 0..50, 0..100, "text".to_owned())) {
-        let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
-        features.insert("1".to_string(), Box::new(StringIndex::new("text".to_string(), Box::from(NoopAnalyzer{}))));
-        features.insert("f".to_string(), Box::new(FullDoc::new()));
-        let schema = SegmentSchema {features};
+        let schema = SegmentSchemaBuilder::new()
+            .add_string_index("string_index", "text", Box::from(NoopAnalyzer{}))
+            .add_full_doc("full_doc")
+            .build();
         index_and_assert_search_matches(&schema, ops, queries);
     }
 
     #[test]
     fn value_query_wiki_id_matching((ref ops, ref queries) in op_and_value_queries(0..10, 0..50, 0..100, "id".to_owned())) {
-        let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
-        features.insert("1".to_string(), Box::new(StringIndex::new("id".to_string(), Box::from(NoopAnalyzer{}))));
-        features.insert("f".to_string(), Box::new(FullDoc::new()));
-        let schema = SegmentSchema {features};
+        let schema = SegmentSchemaBuilder::new()
+            .add_string_index("string_index", "id", Box::from(NoopAnalyzer{}))
+            .add_full_doc("full_doc")
+            .build();
         index_and_assert_search_matches(&schema, ops, queries);
     }
 
     #[test]
     fn term_query_wiki_body_matching((ref ops, ref queries) in op_and_term_queries(0..10, 0..50, 0..100, "text".to_owned(), Box::new(UAX29Analyzer::new()))) {
-        let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
-        features.insert("1".to_string(), Box::new(StringIndex::new("text".to_string(), Box::from(UAX29Analyzer{}))));
-        features.insert("f".to_string(), Box::new(FullDoc::new()));
-        let schema = SegmentSchema {features};
+        let schema = SegmentSchemaBuilder::new()
+            .add_string_index("string_index", "text", Box::from(UAX29Analyzer{}))
+            .add_full_doc("full_doc")
+            .build();
         index_and_assert_search_matches(&schema, ops, queries);
     }
 
     #[test]
     fn text_query_wiki_body_matching((ref ops, ref queries) in op_and_text_queries(0..10, 0..50, 0..100, "text".to_owned(), Box::new(UAX29Analyzer::new()))) {
-        let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
-        features.insert("1".to_string(), Box::new(StringIndex::new("text".to_string(), Box::from(UAX29Analyzer{}))));
-        features.insert("f".to_string(), Box::new(FullDoc::new()));
-        let schema = SegmentSchema {features};
+        let schema = SegmentSchemaBuilder::new()
+            .add_string_index("string_index", "text", Box::from(UAX29Analyzer{}))
+            .add_full_doc("full_doc")
+            .build();
         index_and_assert_search_matches(&schema, ops, queries);
     }
 
     #[test]
     fn text_query_wiki_body_matching_pos_index((ref ops, ref queries) in op_and_text_queries(0..10, 0..50, 0..100, "text".to_owned(), Box::new(UAX29Analyzer::new()))) {
-        let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
-        features.insert("1".to_string(), Box::new(StringPosIndex::new("text".to_string(), Box::from(UAX29Analyzer{}))));
-        features.insert("f".to_string(), Box::new(FullDoc::new()));
-        let schema = SegmentSchema {features};
+        let schema = SegmentSchemaBuilder::new()
+            .add_string_pos_index("string_pos_index", "text", Box::from(UAX29Analyzer{}))
+            .add_full_doc("full_doc")
+            .build();
         index_and_assert_search_matches(&schema, ops, queries);
     }
 
-
-
     #[test]
     fn all_query_wiki_body_matching((ref ops, ref queries) in op_and_all_queries(0..10, 0..50, 0..100, "text".to_owned(), Box::new(UAX29Analyzer::new()))) {
-        let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
-        features.insert("1".to_string(), Box::new(StringIndex::new("text".to_string(), Box::from(UAX29Analyzer{}))));
-        features.insert("f".to_string(), Box::new(FullDoc::new()));
-        let schema = SegmentSchema {features};
+        let schema = SegmentSchemaBuilder::new()
+            .add_string_index("string_index", "text", Box::from(UAX29Analyzer{}))
+            .add_full_doc("full_doc")
+            .build();
         index_and_assert_search_matches(&schema, ops, queries);
     }
 }
@@ -106,9 +100,9 @@ proptest! {
     #![proptest_config(Config::with_cases(10))]
     #[test]
     fn all_docs_many_docs_matching((ref ops, ref queries) in op_and_match_all_queries(0..10, 5000..10_000)) {
-        let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
-        features.insert("f".to_string(), Box::new(FullDoc::new()));
-        let schema = SegmentSchema {features};
+        let schema = SegmentSchemaBuilder::new()
+            .add_full_doc("full_doc")
+            .build();
         index_and_assert_search_matches(&schema, ops, queries);
     }
 }

@@ -123,8 +123,43 @@ impl SegmentSchemaBuilder {
         }
     }
 
-    pub fn add_feature<T: Into<String>>(mut self, name: T, feature: Box<Feature>) -> Self {
+    pub fn add_feature<N: Into<String>>(mut self, name: N, feature: Box<Feature>) -> Self {
         self.features.insert(name.into(), feature);
+        self
+    }
+
+    pub fn add_string_index<N, F>(mut self, name: N, field: F, analyzer: Box<Analyzer>) -> Self
+    where
+        N: Into<String>,
+        F: Into<String>,
+    {
+        self.features.insert(
+            name.into(),
+            Box::new(StringIndex::new(field.into(), analyzer)),
+        );
+        self
+    }
+
+    pub fn add_string_pos_index<N, F>(mut self, name: N, field: F, analyzer: Box<Analyzer>) -> Self
+    where
+        N: Into<String>,
+        F: Into<String>,
+    {
+        self.features.insert(
+            name.into(),
+            Box::new(StringPosIndex::new(field.into(), analyzer)),
+        );
+        self
+    }
+
+    pub fn add_full_doc<N>(mut self, name: N) -> Self
+    where
+        N: Into<String>,
+    {
+        self.features.insert(
+            name.into(),
+            Box::new(FullDoc::new()),
+        );
         self
     }
 
