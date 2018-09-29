@@ -14,7 +14,7 @@ Esmy is a library for full text search, written in Rust. It is inspired by Lucen
 * More query types (e.g. spans, more boolean logic)
 
 ## Example
-```ignore
+```rust
 let schema = SegmentSchemaBuilder::new()
     .add_full_doc("full_doc_feature") //features have names
     .add_string_index(
