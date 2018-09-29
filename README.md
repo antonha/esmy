@@ -1,4 +1,5 @@
 # Esmy
+[![Build status](https://travis-ci.org/antonha/esmy.svg?branch=master)](https://travis-ci.org/antonha/esmy)
 Esmy is a library for full text search, written in Rust. It is inspired by Lucene, but aims to be more flexible.
 
 ## Features
@@ -54,3 +55,6 @@ Features are identified by names, and since they are decoupled from fields you c
 
 Another one is that Esmy has more opinionated (but open) view of what a document is. Lucene treats a document as a set of fields at input, but has no notion of a document when reading. This leads to e.g. Elasticsearch having a JSON-structure emulate this, by storing the JSON as a string field. Since Lucene is not Elasticsearch, Lucene can not use that `_source` field, Lucene can't use that field. Esmy instead has a notion of a document, and an on-disk data structure. This means that Esmy can use the document.
 
+# License
+
+This repository is licensed under the Apache License, Version 2.0  license, with the exception of data in the data directory, which comes from Wikipedia and is only used for testing purposes.
