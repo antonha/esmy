@@ -96,11 +96,17 @@ impl IndexBuilder {
         self
     }
 
-    pub fn open(self, path: PathBuf) -> Result<Index, Error> {
+    pub fn open<P>(self, path: P) -> Result<Index, Error>
+    where
+        P: Into<PathBuf>,
+    {
         Index::open_with_options(path, self.options)
     }
 
-    pub fn create(self, path: PathBuf, schema_template: SegmentSchema) -> Result<Index, Error> {
+    pub fn create<P>(self, path: P, schema_template: SegmentSchema) -> Result<Index, Error>
+    where
+        P: Into<PathBuf>,
+    {
         Index::create_with_options(path, schema_template, self.options)
     }
 }
@@ -129,18 +135,26 @@ impl Index {
         IndexBuilder::new().open(path)
     }
 
-    fn open_with_options(path: PathBuf, options: IndexOptions) -> Result<Index, Error> {
+    fn open_with_options<P>(path: P, options: IndexOptions) -> Result<Index, Error>
+    where
+        P: Into<PathBuf>,
+    {
+        let path = path.into();
         let schema = seg::schema_from_metas(read_index_meta(&path).unwrap().feature_template_metas);
         Ok(Index {
             indexer: Indexer::start(path, schema, options)?,
         })
     }
 
-    fn create_with_options(
-        path: PathBuf,
+    fn create_with_options<P>(
+        path: P,
         schema: SegmentSchema,
         options: IndexOptions,
-    ) -> Result<Index, Error> {
+    ) -> Result<Index, Error>
+    where
+        P: Into<PathBuf>,
+    {
+        let path = path.into();
         fs::create_dir_all(&path)?;
         write_index_meta(
             &path,

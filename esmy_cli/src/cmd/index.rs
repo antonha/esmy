@@ -6,7 +6,6 @@ use serde_json;
 use std::fs::File;
 use std::io;
 use std::io::BufReader;
-use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 
@@ -37,10 +36,9 @@ pub fn run(argv: &[&str]) -> Result<(), Error> {
     let args: Args = Docopt::new(USAGE)
         .and_then(|d| d.argv(argv.iter().map(|&x| x)).deserialize())
         .unwrap_or_else(|e| e.exit());
-    let index_path = PathBuf::from(args.flag_path);
     let index_manager = IndexBuilder::new()
         .auto_merge(!args.flag_no_merge)
-        .open(::std::fs::canonicalize(index_path.clone()).unwrap())?;
+        .open(::std::fs::canonicalize(args.flag_path).unwrap())?;
     let (sender, receiver) = mpsc::sync_channel(20000);
     let flag_file = args.flag_file.clone();
     thread::Builder::new()

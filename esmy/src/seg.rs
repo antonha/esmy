@@ -156,10 +156,7 @@ impl SegmentSchemaBuilder {
     where
         N: Into<String>,
     {
-        self.features.insert(
-            name.into(),
-            Box::new(FullDoc::new()),
-        );
+        self.features.insert(name.into(), Box::new(FullDoc::new()));
         self
     }
 

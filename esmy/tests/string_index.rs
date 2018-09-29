@@ -114,11 +114,10 @@ fn index_and_assert_search_matches(
 ) {
     let index_dir = TempDir::new().unwrap();
     {
-        let index_path = PathBuf::from(index_dir.path());
         let index = IndexBuilder::new()
             .auto_commit(false)
             .auto_merge(false)
-            .create(index_path, schema.clone())
+            .create(index_dir.path(), schema.clone())
             .expect("Could not open index.");
         let mut index_test_state = IndexTestState {
             index,

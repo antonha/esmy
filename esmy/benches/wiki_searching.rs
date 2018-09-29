@@ -74,7 +74,6 @@ fn search_phrases_with_string_pos_index(b: &mut Bencher) {
     })
 }
 
-
 fn index_docs(schema: SegmentSchema) -> Result<Index, Error> {
     let index_dir = TempDir::new().unwrap();
     let index = IndexBuilder::new()
