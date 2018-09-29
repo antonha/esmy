@@ -1,17 +1,19 @@
 use super::Error;
 use analyzis::Analyzer;
 use analyzis::NoopAnalyzer;
-use doc::Doc;
-use doc::DocId;
 use doc::FieldValue;
 use doc_iter::AllDocIter;
 use doc_iter::AllDocsDocIter;
 use doc_iter::DocIter;
+use doc_iter::DocSpansIter;
+use doc_iter::OrderedNearDocSpansIter;
 use doc_iter::VecDocIter;
 use full_doc::FullDocCursor;
 use index::ManagedIndexReader;
 use seg::SegmentReader;
 use std::fmt::Debug;
+use Doc;
+use DocId;
 
 pub fn search(
     index_reader: &ManagedIndexReader,
@@ -161,16 +163,38 @@ impl TextQuery {
 impl Query for TextQuery {
     fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<DocIter>>, Error> {
         if self.values.len() == 1 {
-            let index = reader.string_index(&self.field, &*self.analyzer).unwrap();
-            match index.doc_iter(&self.values[0])? {
-                Some(iter) => Ok(Some(Box::from(iter))),
-                None => Ok(None),
+            if let Some(string_index_reader) = reader.string_index(&self.field, &*self.analyzer) {
+                return match string_index_reader.doc_iter(&self.values[0])? {
+                    Some(iter) => Ok(Some(Box::from(iter))),
+                    None => Ok(None),
+                };
+            } else if let Some(string_pos_index_reader) =
+                reader.string_pos_index(&self.field, &*self.analyzer)
+            {
+                return match string_pos_index_reader.doc_spans_iter(&self.values[0])? {
+                    Some(iter) => Ok(Some(Box::from(iter))),
+                    None => Ok(None),
+                };
             }
-        } else {
+        }
+        if let Some(string_pos_reader) = reader.string_pos_index(&self.field, &*self.analyzer) {
+            let mut sub_spans = Vec::new();
+            for v in &self.values {
+                if let Some(sub_span) = string_pos_reader.doc_spans_iter(&v)? {
+                    sub_spans.push(Box::new(sub_span) as Box<DocSpansIter>);
+                } else {
+                    return Ok(None);
+                }
+            }
+            return Ok(Some(
+                Box::new(OrderedNearDocSpansIter::new(sub_spans)) as Box<DocIter>
+            ));
+        }
+        {
             let mut sub: Vec<Box<DocIter>> = Vec::with_capacity(self.values.len());
             let index = reader.string_index(&self.field, &*self.analyzer).unwrap();
-            for q in &self.values {
-                match index.doc_iter(&q)? {
+            for v in &self.values {
+                match index.doc_iter(&v)? {
                     Some(iter) => sub.push(Box::new(iter)),
                     None => return Ok(None),
                 };
@@ -216,10 +240,7 @@ impl MatchAllDocsQuery {
 }
 
 impl Query for MatchAllDocsQuery {
-    fn segment_matches(
-        &self,
-        reader: &SegmentReader,
-    ) -> Result<Option<Box<DocIter>>, Error> {
+    fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<DocIter>>, Error> {
         Ok(Some(Box::new(AllDocsDocIter::new(reader.info().doc_count))))
     }
 
@@ -240,12 +261,8 @@ impl AllQuery {
 }
 
 impl Query for AllQuery {
-    fn segment_matches(
-        &self,
-        reader: &SegmentReader,
-    ) -> Result<Option<Box<DocIter>>, Error> {
-        let mut sub: Vec<Box<DocIter>> =
-            Vec::with_capacity(self.queries.len());
+    fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<DocIter>>, Error> {
+        let mut sub: Vec<Box<DocIter>> = Vec::with_capacity(self.queries.len());
         for q in &self.queries {
             match q.segment_matches(reader)? {
                 Some(sub_iter) => sub.push(sub_iter),

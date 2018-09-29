@@ -32,6 +32,7 @@ use esmy::search::ValueQuery;
 use esmy::seg::Feature;
 use esmy::seg::SegmentSchema;
 use esmy::string_index::StringIndex;
+use esmy::string_pos_index::StringPosIndex;
 use proptest::collection::vec;
 use proptest::collection::SizeRange;
 use proptest::prelude::*;
@@ -79,6 +80,17 @@ proptest! {
         let schema = SegmentSchema {features};
         index_and_assert_search_matches(&schema, ops, queries);
     }
+
+    #[test]
+    fn text_query_wiki_body_matching_pos_index((ref ops, ref queries) in op_and_text_queries(0..10, 0..50, 0..100, "text".to_owned(), Box::new(UAX29Analyzer::new()))) {
+        let mut features: HashMap<String, Box<dyn Feature>> =  HashMap::new();
+        features.insert("1".to_string(), Box::new(StringPosIndex::new("text".to_string(), Box::from(UAX29Analyzer{}))));
+        features.insert("f".to_string(), Box::new(FullDoc::new()));
+        let schema = SegmentSchema {features};
+        index_and_assert_search_matches(&schema, ops, queries);
+    }
+
+
 
     #[test]
     fn all_query_wiki_body_matching((ref ops, ref queries) in op_and_all_queries(0..10, 0..50, 0..100, "text".to_owned(), Box::new(UAX29Analyzer::new()))) {
@@ -194,17 +206,24 @@ fn op_and_text_queries(
     vec(arb_index_op(num_docs), num_ops)
         .prop_flat_map(move |ops| {
             let num_queries = num_queries.clone();
-            let token_ngrams = extract_token_ngrams(&ops, &field, &*analyzer, 3);
-            if token_ngrams.len() > 0 {
-                vec(
-                    text_query(field.to_owned(), analyzer.clone(), token_ngrams.clone()),
-                    num_queries,
-                ).prop_map(move |queries| (ops.clone(), queries))
-                .boxed()
-            } else {
-                let vec: Vec<Box<Query>> = Vec::new();
-                Just((ops.clone(), vec)).boxed()
-            }
+            let field = field.clone();
+            let analyzer = analyzer.clone();
+            (1usize..4usize)
+                .prop_flat_map(move |ngram_length| {
+                    let ops = ops.clone();
+                    let num_queries = num_queries.clone();
+                    let token_ngrams = extract_token_ngrams(&ops, &field, &*analyzer, ngram_length);
+                    if token_ngrams.len() > 0 {
+                        vec(
+                            text_query(field.to_owned(), analyzer.clone(), token_ngrams.clone()),
+                            num_queries,
+                        ).prop_map(move |queries| (ops.clone(), queries))
+                        .boxed()
+                    } else {
+                        let vec: Vec<Box<Query>> = Vec::new();
+                        Just((ops.clone(), vec)).boxed()
+                    }
+                }).boxed()
         }).boxed()
 }
 
@@ -302,7 +321,8 @@ fn arb_index_op(num_docs: impl Into<SizeRange>) -> BoxedStrategy<IndexOperation>
     prop_oneof![
         vec(arb_doc(), num_docs).prop_map(IndexOperation::Index),
         Just(IndexOperation::Commit),
-        Just(IndexOperation::Merge)
+        Just(IndexOperation::Merge),
+        Just(IndexOperation::ForceMerge)
     ].boxed()
 }
 
@@ -317,6 +337,7 @@ enum IndexOperation {
     Index(Vec<Doc>),
     Commit,
     Merge,
+    ForceMerge,
 }
 
 fn extract_token_ngrams(
@@ -395,6 +416,9 @@ impl IndexTestState {
                 }
                 &IndexOperation::Merge => {
                     self.index.merge().expect("Could not merge segments.");
+                }
+                &IndexOperation::ForceMerge => {
+                    self.index.force_merge().expect("Could not merge segments.");
                 }
             }
         }

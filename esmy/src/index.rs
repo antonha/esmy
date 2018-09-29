@@ -162,6 +162,10 @@ impl Index {
     }
 
     pub fn merge(&self) -> Result<(), Error> {
+        self.indexer.merge()
+    }
+
+    pub fn force_merge(&self) -> Result<(), Error> {
         self.indexer.force_merge()
     }
 
@@ -249,8 +253,12 @@ impl Indexer {
         self.do_commit(docs)
     }
 
+    pub fn merge(&self) -> Result<(), Error> {
+        self.find_merges_and_merge(false)
+    }
+
     pub fn force_merge(&self) -> Result<(), Error> {
-        self.find_merges_and_merge()
+        self.find_merges_and_merge(true)
     }
 
     fn do_commit(&self, docs: Vec<Doc>) -> Result<(), Error> {
@@ -264,7 +272,7 @@ impl Indexer {
                 .try_for_each(|chunk| self.try_commit(&chunk))?;
         };
         if self.options.auto_merge {
-            self.find_merges_and_merge()?;
+            self.find_merges_and_merge(false)?;
         }
         Ok(())
     }
@@ -279,14 +287,14 @@ impl Indexer {
         Ok(())
     }
 
-    fn find_merges_and_merge(&self) -> Result<(), Error> {
-        self.items_to_merge()
+    fn find_merges_and_merge(&self, force: bool) -> Result<(), Error> {
+        self.items_to_merge(force)
             .par_iter()
             .try_for_each(move |segments| self.try_merge(&segments))?;
         Ok(())
     }
 
-    fn items_to_merge(&self) -> Vec<Vec<SegmentInfo>> {
+    fn items_to_merge(&self, force: bool) -> Vec<Vec<SegmentInfo>> {
         let mut local_state = self.state.write().unwrap();
         let infos: Vec<SegmentInfo> = local_state
             .active_segments
@@ -294,7 +302,11 @@ impl Indexer {
             .filter(|info| !local_state.waiting_merge.contains(&info.info.address))
             .map(|item| item.info.clone())
             .collect();
-        let to_merge = find_merges(infos).to_merge;
+        let to_merge = if force {
+            find_merges(infos).to_merge
+        } else {
+            vec![infos]
+        };
         for stage in &to_merge {
             for seg in stage {
                 local_state.waiting_merge.insert(seg.address.clone());
@@ -399,5 +411,5 @@ fn find_merges(mut segments_in: Vec<SegmentInfo>) -> MergeSpec {
             to_merge.push(stage);
         }
     }
-    return MergeSpec { to_merge };
+    return MergeSpec { to_merge: to_merge };
 }
