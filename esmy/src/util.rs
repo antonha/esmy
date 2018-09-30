@@ -2,6 +2,7 @@ use std::io::Error;
 use std::io::Read;
 use std::io::Write;
 
+#[inline]
 pub fn write_vint(write: &mut Write, mut value: u64) -> Result<u32, Error> {
     let mut count = 1;
     while (value & !0x7F) != 0 {
@@ -13,6 +14,7 @@ pub fn write_vint(write: &mut Write, mut value: u64) -> Result<u32, Error> {
     return Result::Ok(count);
 }
 
+#[inline]
 pub fn read_vint(read: &mut Read) -> Result<u64, Error> {
     let mut buf = [1];
     read.read_exact(&mut buf)?;

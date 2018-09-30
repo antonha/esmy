@@ -7,17 +7,19 @@ use doc_iter::DocIter;
 use doc_iter::DocSpansIter;
 use doc_iter::Position;
 use error::Error;
+use fasthash::sea::SeaHash;
+use fasthash::RandomState;
 use fst::map::OpBuilder;
 use fst::{Map, MapBuilder, Streamer};
+use indexmap::map;
+use indexmap::IndexMap;
 use seg::Feature;
 use seg::FeatureAddress;
 use seg::FeatureConfig;
 use seg::FeatureReader;
 use seg::SegmentInfo;
+use smallvec::SmallVec;
 use std::any::Any;
-use std::borrow::Cow;
-use std::collections::btree_map;
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
@@ -53,22 +55,29 @@ impl StringPosIndex {
     fn write_docs<'a>(&self, address: &FeatureAddress, docs: &'a [Doc]) -> Result<(), Error> {
         let analyzer = &self.analyzer;
         let field_name = &self.field_name;
-        let mut map: BTreeMap<Cow<'a, str>, Vec<(u64, Vec<u64>)>> = BTreeMap::new();
+        let s = RandomState::<SeaHash>::new();
+        let mut map = IndexMap::with_hasher(s);
         for (doc_id, doc) in docs.iter().enumerate() {
             for (_name, val) in doc.iter().filter(|e| e.0 == field_name) {
                 match *val {
                     FieldValue::String(ref value) => {
                         for (pos, token) in analyzer.analyze(value).enumerate() {
                             match map.entry(token) {
-                                btree_map::Entry::Vacant(vacant) => {
-                                    vacant.insert(vec![(doc_id as u64, vec![pos as u64])]);
+                                map::Entry::Vacant(vacant) => {
+                                    let mut pos_vec = SmallVec::<[u64;1]>::new();
+                                    pos_vec.push(pos as u64);
+                                    let mut doc_pos_vec = SmallVec::<[(u64, SmallVec<[u64;1]>); 1]>::new();
+                                    doc_pos_vec.push((doc_id as u64, pos_vec));
+                                    vacant.insert(doc_pos_vec);
                                 }
-                                btree_map::Entry::Occupied(mut occupied) => {
+                                map::Entry::Occupied(mut occupied) => {
                                     let mut term_docs = occupied.get_mut();
                                     if term_docs.last().unwrap().0 == doc_id as u64 {
                                         term_docs.last_mut().unwrap().1.push(pos as u64);
                                     } else {
-                                        term_docs.push((doc_id as u64, vec![pos as u64]))
+                                        let mut pos_vec = SmallVec::<[u64;1]>::new();
+                                        pos_vec.push(pos as u64);
+                                        term_docs.push((doc_id as u64, pos_vec))
                                     }
                                 }
                             }
@@ -77,9 +86,11 @@ impl StringPosIndex {
                 };
             }
         }
+        map.sort_keys();
         if map.is_empty() {
             return Ok(());
         }
+
         let fst_writer = BufWriter::new(File::create(address.with_ending(TERM_ID_LISTING))?);
         let mut target_terms = MapBuilder::new(fst_writer)?;
         let mut target_postings =
@@ -87,14 +98,15 @@ impl StringPosIndex {
         let mut target_positions = BufWriter::new(File::create(address.with_ending("pos"))?);
         let mut id_offset = 0u64;
         let mut pos_offset = 0u64;
-        for (term, doc_ids_and_pos) in map.iter() {
+
+        for (term, doc_ids_and_pos) in map {
             target_terms.insert(term.as_bytes(), id_offset)?;
             id_offset += write_vint(&mut target_postings, doc_ids_and_pos.len() as u64)? as u64;
             let mut prev_doc_id = 0u64;
             let mut prev_pos_offset = 0u64;
             for (doc_id, positions) in doc_ids_and_pos {
                 id_offset +=
-                    write_vint(&mut target_postings, (*doc_id - prev_doc_id) as u64)? as u64;
+                    write_vint(&mut target_postings, (doc_id - prev_doc_id) as u64)? as u64;
                 id_offset +=
                     write_vint(&mut target_postings, (pos_offset - prev_pos_offset) as u64)? as u64;
                 prev_pos_offset = pos_offset;
@@ -102,10 +114,10 @@ impl StringPosIndex {
                 let mut last_pos = 0u64;
                 for pos in positions {
                     pos_offset +=
-                        write_vint(&mut target_positions, (*pos - last_pos) as u64)? as u64;
-                    last_pos = *pos;
+                        write_vint(&mut target_positions, (pos - last_pos) as u64)? as u64;
+                    last_pos = pos;
                 }
-                prev_doc_id = *doc_id;
+                prev_doc_id = doc_id;
             }
         }
         target_positions.flush()?;

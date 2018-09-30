@@ -66,6 +66,9 @@ Another one is that Esmy has more opinionated (but open) view of what a document
 
 */
 extern crate byteorder;
+extern crate indexmap;
+extern crate fasthash;
+extern crate smallvec;
 extern crate fst;
 extern crate rand;
 extern crate unicode_segmentation;
