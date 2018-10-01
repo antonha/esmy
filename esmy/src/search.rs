@@ -22,13 +22,10 @@ pub fn search(
 ) -> Result<(), Error> {
     for segment_reader in index_reader.segment_readers() {
         collector.set_reader(segment_reader)?;
-        match query.segment_matches(&segment_reader)? {
-            Some(mut disi) => {
-                while let Some(doc_id) = disi.next_doc()? {
-                    collector.collect(doc_id)?;
-                }
+        if let Some(mut disi) = query.segment_matches(&segment_reader)? {
+            while let Some(doc_id) = disi.next_doc()? {
+                collector.collect(doc_id)?;
             }
-            None => (),
         };
     }
     Ok(())
@@ -129,11 +126,9 @@ impl Query for TermQuery {
 
     fn matches(&self, doc: &Doc) -> bool {
         match doc.get(&self.field) {
-            Some(&FieldValue::String(ref val)) => self
-                .analyzer
-                .analyze(val)
-                .find(|t| t == &self.value)
-                .is_some(),
+            Some(&FieldValue::String(ref val)) => {
+                self.analyzer.analyze(val).any(|t| t == self.value)
+            }
             None => false,
         }
     }
@@ -151,13 +146,13 @@ impl TextQuery {
     pub fn new<N, V>(field: N, value: V, analyzer: Box<Analyzer>) -> TextQuery
     where
         N: Into<String>,
-        V: Into<String>
+        V: Into<String>,
     {
         let v = value.into();
         let values = analyzer
-                .analyze(&v)
-                .map(|c| c.to_string())
-                .collect::<Vec<String>>();
+            .analyze(&v)
+            .map(|c| c.to_string())
+            .collect::<Vec<String>>();
         TextQuery {
             field: field.into(),
             values,
@@ -214,7 +209,7 @@ impl Query for TextQuery {
                     ids.push(doc_id);
                 }
             }
-            return Ok(Some(Box::new(VecDocIter::new(ids))));
+            Ok(Some(Box::new(VecDocIter::new(ids))))
         }
     }
 
@@ -228,15 +223,14 @@ impl Query for TextQuery {
                     .collect::<Vec<String>>();
                 doc_vals
                     .windows(self.values.len())
-                    .find(|t| t == &self.values.as_slice())
-                    .is_some()
+                    .any(|t| t == self.values.as_slice())
             }
             None => false,
         }
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct MatchAllDocsQuery;
 
 impl MatchAllDocsQuery {
@@ -275,7 +269,7 @@ impl Query for AllQuery {
                 None => return Ok(None),
             }
         }
-        return Ok(Some(Box::new(AllDocIter::new(sub))));
+        Ok(Some(Box::new(AllDocIter::new(sub))))
     }
 
     fn matches(&self, doc: &Doc) -> bool {
@@ -284,7 +278,7 @@ impl Query for AllQuery {
                 return false;
             }
         }
-        return true;
+        true
     }
 }
 
@@ -293,6 +287,7 @@ pub trait Collector {
     fn collect(&mut self, doc_id: u64) -> Result<(), Error>;
 }
 
+#[derive(Default)]
 pub struct CountCollector {
     count: u64,
 }
@@ -318,6 +313,7 @@ impl Collector for CountCollector {
     }
 }
 
+#[derive(Default)]
 pub struct AllDocsCollector {
     docs: Vec<Doc>,
     doc_cursor: Option<FullDocCursor>,

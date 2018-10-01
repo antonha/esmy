@@ -79,6 +79,12 @@ pub struct IndexBuilder {
     options: IndexOptions,
 }
 
+impl Default for IndexBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IndexBuilder {
     pub fn new() -> IndexBuilder {
         IndexBuilder {
@@ -126,7 +132,8 @@ pub fn read_index_meta(path: &Path) -> Result<IndexMeta, Error> {
 
 pub fn write_index_meta(path: &Path, meta: &IndexMeta) -> Result<(), Error> {
     let mut file = File::create(path.join("index_meta"))?;
-    Ok(rmps::encode::write(&mut file, meta)?)
+    rmps::encode::write(&mut file, meta)?;
+    Ok(())
 }
 
 pub struct Index {
@@ -211,9 +218,9 @@ impl Indexer {
     ) -> Result<Arc<Self>, Error> {
         let state = Indexer::init_state(&path)?;
         let indexer = Arc::new(Indexer {
-            path: path.clone(),
-            options: options.clone(),
-            schema_template: schema_template,
+            path,
+            options,
+            schema_template,
             state: state.clone(),
         });
         Ok(indexer.clone())
@@ -248,7 +255,7 @@ impl Indexer {
             //TODO error handling
             let entry = entry_res.unwrap();
             let file_name = entry.file_name().to_str().unwrap();
-            let segment_name = file_name.split(".").next().unwrap();
+            let segment_name = file_name.split('.').next().unwrap();
             addresses.push(SegmentAddress {
                 path: PathBuf::from(path),
                 name: segment_name.to_string(),
@@ -265,14 +272,14 @@ impl Indexer {
         if should_commit {
             let docs = mem::replace(&mut local_state.docs_to_index, Vec::new());
             drop(local_state);
-            self.do_commit(docs)?;
+            self.do_commit(&docs)?;
         }
         Ok(())
     }
 
     pub fn force_commit(&self) -> Result<(), Error> {
         let docs = mem::replace(&mut self.state.write().unwrap().docs_to_index, Vec::new());
-        self.do_commit(docs)
+        self.do_commit(&docs)
     }
 
     pub fn merge(&self) -> Result<(), Error> {
@@ -283,7 +290,7 @@ impl Indexer {
         self.find_merges_and_merge(true)
     }
 
-    fn do_commit(&self, docs: Vec<Doc>) -> Result<(), Error> {
+    fn do_commit(&self, docs: &[Doc]) -> Result<(), Error> {
         if docs.is_empty() {
             return Ok(());
         }
@@ -341,9 +348,7 @@ impl Indexer {
         let new_address = new_segment_address(&self.path);
         let seg_cloned: Vec<SegmentAddress> =
             segments.iter().map(|info| info.address.clone()).collect();
-        let addresses_to_merge: Vec<&SegmentAddress> =
-            seg_cloned.iter().map(|address| address).collect();
-        seg::merge(&self.schema_template, &new_address, &addresses_to_merge)?;
+        seg::merge(&self.schema_template, &new_address, &seg_cloned)?;
         let mut local_state = self.state.write().unwrap();
         for old_segment in seg_cloned.iter() {
             //TODO inefficient iteration
@@ -437,5 +442,5 @@ fn find_merges(mut segments_in: Vec<SegmentInfo>) -> MergeSpec {
             to_merge.push(stage);
         }
     }
-    return MergeSpec { to_merge: to_merge };
+    MergeSpec { to_merge }
 }

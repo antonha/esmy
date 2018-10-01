@@ -234,7 +234,7 @@ fn conjunction_advance(iters: &mut [Box<DocIter>]) -> Result<Option<DocId>, Erro
         }
         i += 1;
     }
-    return Ok(Some(target));
+    Ok(Some(target))
 }
 
 //Same as above, can't figure out how to cast..
@@ -273,5 +273,5 @@ fn conjunction_advance_span(iters: &mut [Box<DocSpansIter>]) -> Result<Option<Do
         }
         i += 1;
     }
-    return Ok(Some(target));
+    Ok(Some(target))
 }

@@ -160,7 +160,8 @@ fn op_and_value_queries(
                 let vec: Vec<Box<Query>> = Vec::new();
                 Just((ops.clone(), vec)).boxed()
             }
-        }).boxed()
+        })
+        .boxed()
 }
 
 fn op_and_term_queries(
@@ -179,13 +180,15 @@ fn op_and_term_queries(
                 vec(
                     term_query(field.to_owned(), analyzer.clone(), values.clone()),
                     num_queries,
-                ).prop_map(move |queries| (ops.clone(), queries))
+                )
+                .prop_map(move |queries| (ops.clone(), queries))
                 .boxed()
             } else {
                 let vec: Vec<Box<Query>> = Vec::new();
                 Just((ops.clone(), vec)).boxed()
             }
-        }).boxed()
+        })
+        .boxed()
 }
 
 fn op_and_text_queries(
@@ -210,14 +213,17 @@ fn op_and_text_queries(
                         vec(
                             text_query(field.to_owned(), analyzer.clone(), token_ngrams.clone()),
                             num_queries,
-                        ).prop_map(move |queries| (ops.clone(), queries))
+                        )
+                        .prop_map(move |queries| (ops.clone(), queries))
                         .boxed()
                     } else {
                         let vec: Vec<Box<Query>> = Vec::new();
                         Just((ops.clone(), vec)).boxed()
                     }
-                }).boxed()
-        }).boxed()
+                })
+                .boxed()
+        })
+        .boxed()
 }
 
 fn op_and_match_all_queries(
@@ -230,7 +236,8 @@ fn op_and_match_all_queries(
                 ops.clone(),
                 vec![Box::new(MatchAllDocsQuery::new()) as Box<Query>],
             )
-        }).boxed()
+        })
+        .boxed()
 }
 
 fn op_and_all_queries(
@@ -249,13 +256,15 @@ fn op_and_all_queries(
                 vec(
                     all_queries(field.to_owned(), analyzer.clone(), values.clone()),
                     num_queries,
-                ).prop_map(move |queries| (ops.clone(), queries))
+                )
+                .prop_map(move |queries| (ops.clone(), queries))
                 .boxed()
             } else {
                 let vec: Vec<Box<Query>> = Vec::new();
                 Just((ops.clone(), vec)).boxed()
             }
-        }).boxed()
+        })
+        .boxed()
 }
 
 fn value_query(field_name: String, values: Vec<String>) -> BoxedStrategy<Box<Query>> {
@@ -263,7 +272,8 @@ fn value_query(field_name: String, values: Vec<String>) -> BoxedStrategy<Box<Que
         .prop_map(move |i| {
             let val = &values[i];
             Box::new(ValueQuery::new(field_name.to_owned(), val.clone())) as Box<Query>
-        }).boxed()
+        })
+        .boxed()
 }
 
 fn term_query(
@@ -279,7 +289,8 @@ fn term_query(
                 term.clone(),
                 analyzer.clone(),
             )) as Box<Query>
-        }).boxed()
+        })
+        .boxed()
 }
 
 fn text_query(
@@ -295,7 +306,8 @@ fn text_query(
                 ngram.join(" ").clone(),
                 analyzer.clone(),
             )) as Box<Query>
-        }).boxed()
+        })
+        .boxed()
 }
 
 fn all_queries(
@@ -306,7 +318,8 @@ fn all_queries(
     vec(
         term_query(field_name.clone(), analyzer.clone(), terms.clone()),
         1..5,
-    ).prop_map(|sub_queries| Box::new(AllQuery::new(sub_queries)) as Box<Query>)
+    )
+    .prop_map(|sub_queries| Box::new(AllQuery::new(sub_queries)) as Box<Query>)
     .boxed()
 }
 
@@ -316,7 +329,8 @@ fn arb_index_op(num_docs: impl Into<SizeRange>) -> BoxedStrategy<IndexOperation>
         Just(IndexOperation::Commit),
         Just(IndexOperation::Merge),
         Just(IndexOperation::ForceMerge)
-    ].boxed()
+    ]
+    .boxed()
 }
 
 fn arb_doc() -> BoxedStrategy<Doc> {

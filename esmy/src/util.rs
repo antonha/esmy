@@ -10,22 +10,22 @@ pub fn write_vint(write: &mut Write, mut value: u64) -> Result<u32, Error> {
         value >>= 7;
         count += 1;
     }
-    write.write(&[(value as u8)])?;
-    return Result::Ok(count);
+    write.write_all(&[(value as u8)])?;
+    Result::Ok(count)
 }
 
 #[inline]
 pub fn read_vint(read: &mut Read) -> Result<u64, Error> {
     let mut buf = [1];
     read.read_exact(&mut buf)?;
-    let mut res: u64 = (buf[0] & 0x7F) as u64;
+    let mut res: u64 = u64::from(buf[0] & 0x7F);
     let mut shift = 7;
     while (buf[0] & 0x80) != 0 {
         read.read_exact(&mut buf)?;
-        res |= ((buf[0] & 0x7F) as u64) << shift;
+        res |= u64::from(buf[0] & 0x7F) << shift;
         shift += 7
     }
-    return Ok(res as u64);
+    Ok(res as u64)
 }
 
 #[cfg(test)]

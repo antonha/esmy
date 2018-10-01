@@ -21,6 +21,7 @@ Esmy is a library for full text search, written in Rust. It is inspired by Lucen
 ## Example
 
 ```ignore
+
 let schema = SegmentSchemaBuilder::new()
     .add_full_doc("full_doc_feature") //features have names
     .add_string_index(
@@ -65,17 +66,23 @@ Another one is that Esmy has more opinionated (but open) view of what a document
 
 
 */
+
+#![allow(unknown_lints)]
+#![cfg_attr(feature = "cargo-clippy", feature(tool_lints))]
+#![cfg_attr(feature = "cargo-clippy", warn(clippy::all))]
+#![cfg_attr(feature = "cargo-clippy", allow(clippy::implicit_hasher))]
+
 extern crate byteorder;
-extern crate indexmap;
 extern crate fasthash;
-extern crate smallvec;
 extern crate fst;
+extern crate indexmap;
 extern crate rand;
+extern crate smallvec;
 extern crate unicode_segmentation;
 extern crate walkdir;
 
-extern crate rayon;
 extern crate num_cpus;
+extern crate rayon;
 
 extern crate rmp_serde as rmps;
 extern crate serde;

@@ -63,7 +63,8 @@ pub fn run(argv: &[&str]) -> Result<(), Error> {
                     Ok(())
                 }
             }
-        }).unwrap();
+        })
+        .unwrap();
 
     for doc in receiver {
         index_manager.add_doc(doc.unwrap())?;

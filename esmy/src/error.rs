@@ -36,24 +36,24 @@ impl std::error::Error for Error {
 
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self {
-        return Error::IOError(e);
+        Error::IOError(e)
     }
 }
 
 impl From<rmps::decode::Error> for Error {
     fn from(e: rmps::decode::Error) -> Self {
-        return Error::Other(Box::new(e));
+        Error::Other(Box::new(e))
     }
 }
 
 impl From<rmps::encode::Error> for Error {
     fn from(e: rmps::encode::Error) -> Self {
-        return Error::Other(Box::new(e));
+        Error::Other(Box::new(e))
     }
 }
 
 impl From<ThreadPoolBuildError> for Error {
     fn from(e: ThreadPoolBuildError) -> Self {
-        return Error::Other(Box::new(e));
+        Error::Other(Box::new(e))
     }
 }

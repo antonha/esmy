@@ -33,8 +33,8 @@ use util::write_vint;
 use Doc;
 use DocId;
 
-const TERM_ID_LISTING: &'static str = "tid";
-const ID_DOC_LISTING: &'static str = "iddoc";
+const TERM_ID_LISTING: &str = "tid";
+const ID_DOC_LISTING: &str = "iddoc";
 
 #[derive(Clone)]
 pub struct StringPosIndex {
@@ -64,9 +64,10 @@ impl StringPosIndex {
                         for (pos, token) in analyzer.analyze(value).enumerate() {
                             match map.entry(token) {
                                 map::Entry::Vacant(vacant) => {
-                                    let mut pos_vec = SmallVec::<[u64;1]>::new();
+                                    let mut pos_vec = SmallVec::<[u64; 1]>::new();
                                     pos_vec.push(pos as u64);
-                                    let mut doc_pos_vec = SmallVec::<[(u64, SmallVec<[u64;1]>); 1]>::new();
+                                    let mut doc_pos_vec =
+                                        SmallVec::<[(u64, SmallVec<[u64; 1]>); 1]>::new();
                                     doc_pos_vec.push((doc_id as u64, pos_vec));
                                     vacant.insert(doc_pos_vec);
                                 }
@@ -75,7 +76,7 @@ impl StringPosIndex {
                                     if term_docs.last().unwrap().0 == doc_id as u64 {
                                         term_docs.last_mut().unwrap().1.push(pos as u64);
                                     } else {
-                                        let mut pos_vec = SmallVec::<[u64;1]>::new();
+                                        let mut pos_vec = SmallVec::<[u64; 1]>::new();
                                         pos_vec.push(pos as u64);
                                         term_docs.push((doc_id as u64, pos_vec))
                                     }
@@ -101,20 +102,27 @@ impl StringPosIndex {
 
         for (term, doc_ids_and_pos) in map {
             target_terms.insert(term.as_bytes(), id_offset)?;
-            id_offset += write_vint(&mut target_postings, doc_ids_and_pos.len() as u64)? as u64;
+            id_offset += u64::from(write_vint(
+                &mut target_postings,
+                doc_ids_and_pos.len() as u64,
+            )?);
             let mut prev_doc_id = 0u64;
             let mut prev_pos_offset = 0u64;
             for (doc_id, positions) in doc_ids_and_pos {
-                id_offset +=
-                    write_vint(&mut target_postings, (doc_id - prev_doc_id) as u64)? as u64;
-                id_offset +=
-                    write_vint(&mut target_postings, (pos_offset - prev_pos_offset) as u64)? as u64;
+                id_offset += u64::from(write_vint(
+                    &mut target_postings,
+                    (doc_id - prev_doc_id) as u64,
+                )?);
+                id_offset += u64::from(write_vint(
+                    &mut target_postings,
+                    (pos_offset - prev_pos_offset) as u64,
+                )?);
                 prev_pos_offset = pos_offset;
-                pos_offset += write_vint(&mut target_positions, positions.len() as u64)? as u64;
+                pos_offset += u64::from(write_vint(&mut target_positions, positions.len() as u64)?);
                 let mut last_pos = 0u64;
                 for pos in positions {
                     pos_offset +=
-                        write_vint(&mut target_positions, (pos - last_pos) as u64)? as u64;
+                        u64::from(write_vint(&mut target_positions, (pos - last_pos) as u64)?);
                     last_pos = pos;
                 }
                 prev_doc_id = doc_id;
@@ -314,7 +322,7 @@ impl DocSpansIter for TermDocSpansIter {
         let pos_diff = read_vint(&mut self.pos_file)?;
         self.current_pos += pos_diff;
         self.pos_left -= 1;
-        return Ok(Some(self.current_pos));
+        Ok(Some(self.current_pos))
     }
 
     fn start_pos(&self) -> Option<Position> {
@@ -370,18 +378,18 @@ where
 
         let mut term_doc_counts: Vec<u64> = vec![0; source_postings.len()];
         for term_offset in &sorted_offsets {
-            let mut source_posting = source_postings.get_mut(term_offset.index).unwrap();
+            let mut source_posting = &mut source_postings[term_offset.index];
             source_posting.seek(SeekFrom::Start(term_offset.value as u64))?;
             term_doc_counts[term_offset.index] = read_vint(&mut source_posting)?;
         }
 
         let term_doc_count: u64 = term_doc_counts.iter().sum();
-        postings_offset += write_vint(&mut target_postings, term_doc_count)? as u64;
+        postings_offset += u64::from(write_vint(&mut target_postings, term_doc_count)?);
         let mut last_written_doc_id = 0u64;
         let mut last_written_pos_offset = 0u64;
         for term_offset in &sorted_offsets {
-            let mut source_posting = source_postings.get_mut(term_offset.index).unwrap();
-            let mut source_position = source_positions.get_mut(term_offset.index).unwrap();
+            let mut source_posting = &mut source_postings[term_offset.index];
+            let mut source_position = &mut source_positions[term_offset.index];
             let mut last_read_doc_id = 0u64;
             let mut last_read_pos_offset = 0u64;
             for _i in 0..term_doc_counts[term_offset.index] {
@@ -389,7 +397,7 @@ where
                 let read_doc_id = last_read_doc_id + doc_diff;
                 let doc_id_to_write = new_offsets[term_offset.index] + read_doc_id;
                 let diff_to_write = doc_id_to_write - last_written_doc_id;
-                postings_offset += write_vint(&mut target_postings, diff_to_write)? as u64;
+                postings_offset += u64::from(write_vint(&mut target_postings, diff_to_write)?);
                 last_read_doc_id = read_doc_id;
                 last_written_doc_id = doc_id_to_write;
 
@@ -398,15 +406,16 @@ where
 
                 source_position.seek(SeekFrom::Start(read_position_offset))?;
                 let pos_offset_to_write = positions_offset - last_written_pos_offset;
-                postings_offset += write_vint(&mut target_postings, pos_offset_to_write)? as u64;
+                postings_offset +=
+                    u64::from(write_vint(&mut target_postings, pos_offset_to_write)?);
                 last_read_pos_offset = read_position_offset;
                 last_written_pos_offset = positions_offset;
 
                 let num_positions = read_vint(source_position)?;
-                positions_offset += write_vint(&mut target_positions, num_positions)? as u64;
+                positions_offset += u64::from(write_vint(&mut target_positions, num_positions)?);
                 for _j in 0..num_positions {
                     let pos_diff = read_vint(source_position)?;
-                    positions_offset += write_vint(&mut target_positions, pos_diff)? as u64;
+                    positions_offset += u64::from(write_vint(&mut target_positions, pos_diff)?);
                 }
             }
         }

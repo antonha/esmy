@@ -20,7 +20,7 @@ use std::io::Seek;
 use std::io::SeekFrom;
 use std::io::Write;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct FullDoc {}
 
 trait Offsets {
@@ -94,7 +94,7 @@ impl Feature for FullDoc {
         Ok(())
     }
 
-    fn reader<'b>(&self, address: &FeatureAddress) -> Result<Box<FeatureReader>, Error> {
+    fn reader(&self, address: &FeatureAddress) -> Result<Box<FeatureReader>, Error> {
         Ok(Box::new(FullDocReader {
             address: address.clone(),
         }))

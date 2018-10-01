@@ -38,7 +38,7 @@ impl Clone for Box<Analyzer> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct UAX29Analyzer;
 
 impl UAX29Analyzer {
@@ -78,7 +78,7 @@ fn is_only_whitespace_or_control_char(s: &str) -> bool {
             return false;
         }
     }
-    return true;
+    true
 }
 
 #[derive(Clone, Debug)]

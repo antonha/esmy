@@ -49,8 +49,8 @@ pub fn run(argv: &[&str]) -> Result<(), Error> {
     Ok(())
 }
 
-fn parse_query<'a>(query_string: &'a str, analyzer: Box<Analyzer>) -> TextQuery {
-    let split: Vec<&str> = query_string.split(":").collect();
+fn parse_query(query_string: &str, analyzer: Box<Analyzer>) -> TextQuery {
+    let split: Vec<&str> = query_string.split(':').collect();
     TextQuery::new(split[0].to_string(), split[1].to_string(), analyzer)
 }
 

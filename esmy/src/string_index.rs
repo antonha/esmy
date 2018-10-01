@@ -27,8 +27,8 @@ use util::write_vint;
 use Doc;
 use DocId;
 
-const TERM_ID_LISTING: &'static str = "tid";
-const ID_DOC_LISTING: &'static str = "iddoc";
+const TERM_ID_LISTING: &str = "tid";
+const ID_DOC_LISTING: &str = "iddoc";
 
 #[derive(Clone)]
 pub struct StringIndex {
@@ -75,6 +75,10 @@ impl StringIndex {
         if map.is_empty() {
             return Ok(());
         }
+        let x = 3;
+        if x == 4 {
+            eprint!("foo");
+        }
         let fst_writer = BufWriter::new(File::create(address.with_ending(TERM_ID_LISTING))?);
         let mut target_terms = MapBuilder::new(fst_writer)?;
         let mut target_postings =
@@ -82,10 +86,10 @@ impl StringIndex {
         let mut offset = 0u64;
         for (term, doc_ids) in map.iter() {
             target_terms.insert(term.as_bytes(), offset)?;
-            offset += write_vint(&mut target_postings, doc_ids.len() as u64)? as u64;
+            offset += u64::from(write_vint(&mut target_postings, doc_ids.len() as u64)?);
             let mut prev = 0u64;
             for doc_id in doc_ids {
-                offset += write_vint(&mut target_postings, (*doc_id - prev) as u64)? as u64;
+                offset += u64::from(write_vint(&mut target_postings, (*doc_id - prev) as u64)?);
                 prev = *doc_id;
             }
         }
@@ -255,7 +259,7 @@ impl DocIter for TermDocIter {
 
 impl From<fst::Error> for Error {
     fn from(e: fst::Error) -> Self {
-        return Error::Other(Box::new(e));
+        Error::Other(Box::new(e))
     }
 }
 
@@ -288,23 +292,23 @@ where
 
         let mut term_doc_counts: Vec<u64> = vec![0; source_postings.len()];
         for term_offset in &sorted_offsets {
-            let mut source_posting = source_postings.get_mut(term_offset.index).unwrap();
+            let mut source_posting = &mut source_postings[term_offset.index];
             source_posting.seek(SeekFrom::Start(term_offset.value as u64))?;
             term_doc_counts[term_offset.index] = read_vint(&mut source_posting)?;
         }
 
         let term_doc_count: u64 = term_doc_counts.iter().sum();
-        offset += write_vint(&mut target_postings, term_doc_count)? as u64;
+        offset += u64::from(write_vint(&mut target_postings, term_doc_count)?);
         let mut last_written_doc_id = 0u64;
         for term_offset in &sorted_offsets {
-            let mut source_posting = source_postings.get_mut(term_offset.index).unwrap();
+            let mut source_posting = &mut source_postings[term_offset.index];
             let mut last_read_doc_id = 0u64;
             for _i in 0..term_doc_counts[term_offset.index] {
                 let diff = read_vint(&mut source_posting)?;
                 let read_doc_id = last_read_doc_id + diff;
                 let doc_id_to_write = new_offsets[term_offset.index] + read_doc_id;
                 let diff_to_write = doc_id_to_write - last_written_doc_id;
-                offset += write_vint(&mut target_postings, diff_to_write)? as u64;
+                offset += u64::from(write_vint(&mut target_postings, diff_to_write)?);
                 last_read_doc_id = read_doc_id;
                 last_written_doc_id = doc_id_to_write;
             }

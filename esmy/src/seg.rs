@@ -35,7 +35,7 @@ impl FeatureConfig {
                 }
             }
         }
-        return None;
+        None
     }
 
     fn is_none(&self) -> bool {
@@ -55,7 +55,7 @@ pub trait Feature: FeatureClone + Sync + Send {
     fn to_config(&self) -> FeatureConfig;
     fn as_any(&self) -> &Any;
     fn write_segment(&self, address: &FeatureAddress, docs: &[Doc]) -> Result<(), Error>;
-    fn reader<'a>(&self, address: &FeatureAddress) -> Result<Box<FeatureReader>, Error>;
+    fn reader(&self, address: &FeatureAddress) -> Result<Box<FeatureReader>, Error>;
     fn merge_segments(
         &self,
         old_segments: &[(FeatureAddress, SegmentInfo)],
@@ -112,6 +112,7 @@ pub struct SegmentSchema {
     pub features: HashMap<String, Box<Feature>>,
 }
 
+#[derive(Default)]
 pub struct SegmentSchemaBuilder {
     features: HashMap<String, Box<Feature>>,
 }
@@ -205,8 +206,7 @@ pub fn schema_from_metas(feature_metas: HashMap<String, FeatureMeta>) -> Segment
         };
         features.insert(name, feature);
     }
-    let schema = SegmentSchema { features };
-    schema
+    SegmentSchema { features }
 }
 
 pub fn schema_to_feature_metas(schema: &SegmentSchema) -> HashMap<String, FeatureMeta> {
@@ -220,7 +220,7 @@ pub fn schema_to_feature_metas(schema: &SegmentSchema) -> HashMap<String, Featur
             },
         );
     }
-    return feature_metas;
+    feature_metas
 }
 
 impl SegmentAddress {
@@ -231,11 +231,11 @@ impl SegmentAddress {
         let feature_metas = segment_meta.feature_metas;
         let schema = schema_from_metas(feature_metas);
 
-        return Ok(SegmentInfo {
+        Ok(SegmentInfo {
             address: self.clone(),
-            schema: schema,
+            schema,
             doc_count: segment_meta.doc_count,
-        });
+        })
     }
 
     pub fn remove_files(&self) -> Result<(), io::Error> {
@@ -280,7 +280,7 @@ pub fn write_seg(
     if docs.is_empty() {
         return Ok(());
     }
-    &schema.features.par_iter().try_for_each(|(name, feature)| {
+    schema.features.par_iter().try_for_each(|(name, feature)| {
         feature.write_segment(
             &FeatureAddress {
                 segment: address.clone(),
@@ -302,10 +302,10 @@ pub fn write_seg(
 pub fn merge(
     schema: &SegmentSchema,
     new_address: &SegmentAddress,
-    addresses: &[&SegmentAddress],
+    addresses: &[SegmentAddress],
 ) -> Result<(), Error> {
     let mut infos: Vec<SegmentInfo> = Vec::with_capacity(addresses.len());
-    for address in addresses.into_iter() {
+    for address in addresses {
         let mut seg_file = address.open_file("seg")?;
         let segment_meta: SegmentMeta = rmps::from_read(seg_file)?;
 
@@ -341,7 +341,8 @@ pub fn merge(
                         },
                         i.clone(),
                     )
-                }).collect();
+                })
+                .collect();
             feature.merge_segments(
                 &old_addressses,
                 &FeatureAddress {
@@ -388,7 +389,7 @@ impl SegmentReader {
             feature_readers.insert(name.clone(), feature.reader(address)?);
         }
         Ok(SegmentReader {
-            info: info,
+            info,
             readers: feature_readers,
         })
     }
@@ -403,18 +404,15 @@ impl SegmentReader {
         analyzer: &Analyzer,
     ) -> Option<&StringIndexReader> {
         for reader in self.readers.values() {
-            match reader.as_any().downcast_ref::<StringIndexReader>() {
-                Some(reader) => {
-                    if reader.feature.field_name == field_name
-                        && analyzer.analyzer_type() == reader.feature.analyzer.analyzer_type()
-                    {
-                        return Some(reader);
-                    }
+            if let Some(reader) = reader.as_any().downcast_ref::<StringIndexReader>() {
+                if reader.feature.field_name == field_name
+                    && analyzer.analyzer_type() == reader.feature.analyzer.analyzer_type()
+                {
+                    return Some(reader);
                 }
-                None => (),
             }
         }
-        return None;
+        None
     }
 
     pub fn string_pos_index(
@@ -423,29 +421,23 @@ impl SegmentReader {
         analyzer: &Analyzer,
     ) -> Option<&StringPosIndexReader> {
         for reader in self.readers.values() {
-            match reader.as_any().downcast_ref::<StringPosIndexReader>() {
-                Some(reader) => {
-                    if reader.feature.field_name == field_name
-                        && analyzer.analyzer_type() == reader.feature.analyzer.analyzer_type()
-                    {
-                        return Some(reader);
-                    }
+            if let Some(reader) = reader.as_any().downcast_ref::<StringPosIndexReader>() {
+                if reader.feature.field_name == field_name
+                    && analyzer.analyzer_type() == reader.feature.analyzer.analyzer_type()
+                {
+                    return Some(reader);
                 }
-                None => (),
             }
         }
-        return None;
+        None
     }
 
     pub fn full_doc(&self) -> Option<&FullDocReader> {
         for reader in self.readers.values() {
-            match reader.as_any().downcast_ref::<FullDocReader>() {
-                Some(reader) => {
-                    return Some(reader);
-                }
-                None => (),
+            if let Some(reader) = reader.as_any().downcast_ref::<FullDocReader>() {
+                return Some(reader);
             }
         }
-        return None;
+        None
     }
 }
