@@ -37,7 +37,7 @@ mod tests {
     use proptest::test_runner::Config;
     use std::io::Cursor;
 
-    proptest!{
+    proptest! {
         #![proptest_config(Config::with_cases(100_000))]
         #[test]
         fn read_write_correct(num in any::<u64>()) {

@@ -1,9 +1,28 @@
-use super::Error;
-use doc::Doc;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::fs;
+use std::fs::File;
+use std::fs::OpenOptions;
+use std::hash::{Hash, Hasher};
+use std::io::prelude::*;
+use std::mem;
+use std::path::Path;
+use std::path::PathBuf;
+use std::sync::atomic;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use std::sync::RwLock;
+
+use bit_vec::BitVec;
+use num_cpus;
 use rand;
 use rand::Rng;
 use rayon::prelude::*;
 use rmps;
+use walkdir::WalkDir;
+
+use doc::Doc;
+use doc_iter::DocIter;
 use search;
 use search::Collector;
 use search::Query;
@@ -12,19 +31,8 @@ use seg::write_seg;
 use seg::FeatureMeta;
 use seg::SegmentSchema;
 use seg::{SegmentAddress, SegmentInfo, SegmentReader};
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::fs;
-use std::fs::File;
-use std::hash::{Hash, Hasher};
-use std::mem;
-use std::path::Path;
-use std::path::PathBuf;
-use std::sync::atomic;
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
-use std::sync::RwLock;
-use walkdir::WalkDir;
+
+use super::Error;
 
 pub struct SegRef {
     info: SegmentInfo,
@@ -193,6 +201,10 @@ impl Index {
         self.indexer.force_merge()
     }
 
+    pub fn delete(&self, query: &impl Query) -> Result<(), Error> {
+        self.indexer.delete(query)
+    }
+
     pub fn open_reader(&self) -> Result<ManagedIndexReader, Error> {
         self.indexer.open_reader()
     }
@@ -205,7 +217,6 @@ struct Indexer {
     state: Arc<RwLock<IndexState>>,
 }
 
-use num_cpus;
 lazy_static! {
     static ref NUM_CPUS: usize = num_cpus::get();
 }
@@ -244,11 +255,11 @@ impl Indexer {
     fn segments_on_disk(path: &Path) -> Result<Vec<SegmentAddress>, Error> {
         let walker = WalkDir::new(path).min_depth(1).max_depth(1).into_iter();
         let entries = walker.filter_entry(|e| {
-            e.file_type().is_dir() || e
-                .file_name()
-                .to_str()
-                .map(|s| s.ends_with(".seg"))
-                .unwrap_or(false)
+            e.file_type().is_dir()
+                || e.file_name()
+                    .to_str()
+                    .map(|s| s.ends_with(".seg"))
+                    .unwrap_or(false)
         });
         let mut addresses = Vec::new();
         for entry_res in entries {
@@ -288,6 +299,13 @@ impl Indexer {
 
     pub fn force_merge(&self) -> Result<(), Error> {
         self.find_merges_and_merge(true)
+    }
+
+    pub fn delete(&self, query: &impl Query) -> Result<(), Error> {
+        let reader = self.open_reader()?;
+        let mut collector = DeletingCollector::new();
+        reader.search(query, &mut collector)?;
+        Ok(())
     }
 
     fn do_commit(&self, docs: &[Doc]) -> Result<(), Error> {
@@ -372,6 +390,45 @@ impl Indexer {
             _segment_refs: guard.active_segments.values().cloned().collect(),
             readers,
         })
+    }
+}
+
+struct DeletingCollector {}
+
+impl DeletingCollector {
+    pub fn new() -> DeletingCollector {
+        DeletingCollector {}
+    }
+}
+
+impl Collector for DeletingCollector {
+    fn collect_for(&mut self, reader: &SegmentReader, docs: &mut DocIter) -> Result<(), Error> {
+        let doc_count = reader.info().doc_count;
+        let mut to_delete = BitVec::from_elem(doc_count as usize, false);
+        while let Some(doc_id) = docs.next_doc()? {
+            to_delete.set(doc_id as usize, true);
+        }
+
+        let to_write = match reader.info().address.open_file_if_exists(".del")? {
+            Some(mut file) => {
+                let mut buffer = Vec::with_capacity((doc_count / 8) as usize);
+                file.read_to_end(&mut buffer)?;
+                let mut existing = BitVec::from_bytes(&buffer);
+                existing.truncate(doc_count as usize);
+                existing.union(&to_delete);
+                existing
+            }
+            None => to_delete,
+        };
+        let mut options = OpenOptions::new();
+        options.write(true);
+        options.create(true);
+        let mut file = reader
+            .info()
+            .address
+            .open_file_with_options(".del", options)?;
+        file.write_all(&to_write.to_bytes())?;
+        Ok(())
     }
 }
 

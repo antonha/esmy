@@ -1,9 +1,11 @@
-use docopt::Docopt;
-use esmy::index::read_index_meta;
-use esmy::Error;
-use serde_json;
 use std::io;
 use std::path::PathBuf;
+
+use docopt::Docopt;
+use serde_json;
+
+use esmy::index::read_index_meta;
+use esmy::Error;
 
 static USAGE: &'static str = concat!(
     "

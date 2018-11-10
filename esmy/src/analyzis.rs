@@ -108,8 +108,8 @@ impl Analyzer for WhiteSpaceAnalyzer {
 pub struct NoopAnalyzer;
 
 impl NoopAnalyzer {
-    pub fn new() -> UAX29Analyzer {
-        UAX29Analyzer {}
+    pub fn new() -> NoopAnalyzer {
+        NoopAnalyzer {}
     }
 
     pub fn boxed(self) -> Box<NoopAnalyzer> {

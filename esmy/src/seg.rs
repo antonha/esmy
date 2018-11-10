@@ -1,15 +1,21 @@
+use std::any::Any;
+use std::collections::HashMap;
+use std::fs;
+use std::fs::File;
+use std::fs::OpenOptions;
+use std::io;
+use std::io::Read;
+use std::path::PathBuf;
+
+use bit_vec::BitVec;
+use rayon::prelude::*;
+use rmps;
+
 use analyzis::Analyzer;
 use doc::Doc;
 use error::Error;
 use full_doc::FullDoc;
 use full_doc::FullDocReader;
-use rayon::prelude::*;
-use rmps;
-use std::any::Any;
-use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io;
-use std::path::PathBuf;
 use string_index::StringIndex;
 use string_index::StringIndexReader;
 use string_pos_index::StringPosIndex;
@@ -21,7 +27,6 @@ pub enum FeatureConfig {
     None,
     Bool(bool),
     Int(i64),
-    Float(f64),
     String(String),
     Map(HashMap<String, FeatureConfig>),
 }
@@ -32,6 +37,17 @@ impl FeatureConfig {
             if let Some(field) = map.get(path) {
                 if let FeatureConfig::String(value) = field {
                     return Some(&value);
+                }
+            }
+        }
+        None
+    }
+
+    pub fn int_at(&self, path: &str) -> Option<i64> {
+        if let FeatureConfig::Map(map) = self {
+            if let Some(field) = map.get(path) {
+                if let FeatureConfig::Int(value) = field {
+                    return Some(*value);
                 }
             }
         }
@@ -58,7 +74,7 @@ pub trait Feature: FeatureClone + Sync + Send {
     fn reader(&self, address: &FeatureAddress) -> Result<Box<FeatureReader>, Error>;
     fn merge_segments(
         &self,
-        old_segments: &[(FeatureAddress, SegmentInfo)],
+        old_segments: &[(FeatureAddress, SegmentInfo, BitVec)],
         new_segment: &FeatureAddress,
     ) -> Result<(), Error>;
 }
@@ -90,10 +106,7 @@ impl Clone for Box<Feature> {
 pub struct FeatureMeta {
     #[serde(rename = "type")]
     ftype: String,
-    #[serde(
-        default = "no_config",
-        skip_serializing_if = "FeatureConfig::is_none"
-    )]
+    #[serde(default = "no_config", skip_serializing_if = "FeatureConfig::is_none")]
     config: FeatureConfig,
 }
 
@@ -161,6 +174,17 @@ impl SegmentSchemaBuilder {
         self
     }
 
+    pub fn add_full_doc_with_compression<N>(mut self, name: N, compression_level: u32) -> Self
+    where
+        N: Into<String>,
+    {
+        self.features.insert(
+            name.into(),
+            Box::new(FullDoc::with_compression_level(compression_level)),
+        );
+        self
+    }
+
     pub fn build(self) -> SegmentSchema {
         SegmentSchema {
             features: self.features,
@@ -192,6 +216,17 @@ pub struct SegmentInfo {
     pub address: SegmentAddress,
     pub schema: SegmentSchema,
     pub doc_count: u64,
+}
+
+impl SegmentInfo {
+    pub fn count_deleted(&self) -> Result<u64, Error> {
+        Ok(self
+            .address
+            .read_deleted(self.doc_count as usize)?
+            .iter()
+            .filter(|b| *b)
+            .count() as u64)
+    }
 }
 
 pub fn schema_from_metas(feature_metas: HashMap<String, FeatureMeta>) -> SegmentSchema {
@@ -253,7 +288,7 @@ impl SegmentAddress {
 
     pub fn create_file(&self, ending: &str) -> Result<File, io::Error> {
         if !self.path.exists() {
-            fs::create_dir_all(&self.path).unwrap();
+            fs::create_dir_all(&self.path)?;
         }
         let name = format!("{}.{}", self.name, ending);
         File::create(self.path.join(name))
@@ -265,10 +300,42 @@ impl SegmentAddress {
         File::open(file)
     }
 
+    pub fn open_file_with_options(
+        &self,
+        ending: &str,
+        options: OpenOptions,
+    ) -> Result<File, io::Error> {
+        let name = format!("{}.{}", self.name, ending);
+        let file = self.path.join(name);
+        options.open(file)
+    }
+
+    pub fn open_file_if_exists(&self, ending: &str) -> Result<Option<File>, io::Error> {
+        let name = format!("{}.{}", self.name, ending);
+        let file = self.path.join(name);
+        if file.exists() {
+            Ok(Some(File::open(file)?))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn remove_file(&self, ending: &str) -> Result<(), io::Error> {
         let name = format!("{}.{}", self.name, ending);
         let file = self.path.join(name);
         fs::remove_file(file)
+    }
+
+    pub fn read_deleted(&self, doc_count: usize) -> Result<BitVec<u32>, Error> {
+        let deleted_docs = match self.open_file_if_exists(".del")? {
+            Some(mut file) => {
+                let mut buffer = Vec::with_capacity((doc_count / 8) as usize);
+                file.read_to_end(&mut buffer)?;
+                BitVec::from_bytes(&buffer)
+            }
+            None => BitVec::from_elem(doc_count, false),
+        };
+        Ok(deleted_docs)
     }
 }
 
@@ -331,18 +398,18 @@ pub fn merge(
         .features
         .par_iter()
         .try_for_each(|(name, feature)| -> Result<(), Error> {
-            let old_addressses: Vec<(FeatureAddress, SegmentInfo)> = infos
-                .iter()
-                .map(|i| {
-                    (
-                        FeatureAddress {
-                            segment: i.address.clone(),
-                            name: name.clone(),
-                        },
-                        i.clone(),
-                    )
-                })
-                .collect();
+            let mut old_addressses: Vec<(FeatureAddress, SegmentInfo, BitVec)> = Vec::new();
+            for info in &infos {
+                let deleted_docs = info.address.read_deleted(info.doc_count as usize)?;
+                old_addressses.push((
+                    FeatureAddress {
+                        segment: info.address.clone(),
+                        name: name.clone(),
+                    },
+                    info.clone(),
+                    deleted_docs,
+                ))
+            }
             feature.merge_segments(
                 &old_addressses,
                 &FeatureAddress {
@@ -352,7 +419,6 @@ pub fn merge(
             )?;
             Ok(())
         })?;
-    let doc_count: u64 = infos.iter().map(|i| i.doc_count).sum();
     let mut feature_metas = HashMap::new();
     for (name, feature) in &schema.features {
         feature_metas.insert(
@@ -363,6 +429,11 @@ pub fn merge(
             },
         );
     }
+    let mut num_deleted = 0u64;
+    for info in &infos {
+        num_deleted += info.count_deleted()?;
+    }
+    let doc_count: u64 = infos.iter().map(|i| i.doc_count).sum::<u64>() - num_deleted;
     let segment_meta = SegmentMeta {
         feature_metas,
         doc_count,
@@ -375,6 +446,7 @@ pub fn merge(
 pub struct SegmentReader {
     //address: SegmentAddress,
     info: SegmentInfo,
+    deleted_docs: BitVec,
     readers: HashMap<String, Box<FeatureReader>>,
 }
 
@@ -388,14 +460,20 @@ impl SegmentReader {
             };
             feature_readers.insert(name.clone(), feature.reader(address)?);
         }
+        let deleted_docs = info.address.read_deleted(info.doc_count as usize)?;
         Ok(SegmentReader {
             info,
+            deleted_docs,
             readers: feature_readers,
         })
     }
 
     pub fn info(&self) -> &SegmentInfo {
         &self.info
+    }
+
+    pub fn deleted_docs(&self) -> &BitVec {
+        &self.deleted_docs
     }
 
     pub fn string_index(

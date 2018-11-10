@@ -90,7 +90,7 @@ mod tests {
         hash_map(arb_fieldname(), arb_fieldvalue(), 0..100).boxed()
     }
 
-    proptest!{
+    proptest! {
         #[test]
         fn serializes_doc_correct(ref doc in arb_doc()) {
             let mut buf = Vec::new();

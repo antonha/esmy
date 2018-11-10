@@ -1,13 +1,15 @@
-use docopt::Docopt;
-use esmy::doc::Doc;
-use esmy::index::IndexBuilder;
-use esmy::Error;
-use serde_json;
 use std::fs::File;
 use std::io;
 use std::io::BufReader;
 use std::sync::mpsc;
 use std::thread;
+
+use docopt::Docopt;
+use serde_json;
+
+use esmy::doc::Doc;
+use esmy::index::IndexBuilder;
+use esmy::Error;
 
 static USAGE: &'static str = concat!(
     "

@@ -1,12 +1,14 @@
+use std::collections::HashMap;
+use std::io;
+use std::path::PathBuf;
+
 use docopt::Docopt;
+use serde_json;
+
 use esmy::index::write_index_meta;
 use esmy::index::IndexMeta;
 use esmy::seg::FeatureMeta;
 use esmy::Error;
-use serde_json;
-use std::collections::HashMap;
-use std::io;
-use std::path::PathBuf;
 
 static USAGE: &'static str = concat!(
     "

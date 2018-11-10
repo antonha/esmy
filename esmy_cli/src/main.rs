@@ -52,6 +52,8 @@ fn main() {
 enum Command {
     Index,
     List,
+    Delete,
+    ForceMerge,
     WriteTemplate,
     ReadTemplate,
 }
@@ -64,6 +66,8 @@ impl Command {
         match self {
             Command::Index => cmd::index::run(argv),
             Command::List => cmd::list::run(argv),
+            Command::Delete => cmd::delete::run(argv),
+            Command::ForceMerge => cmd::force_merge::run(argv),
             Command::ReadTemplate => cmd::read_template::run(argv),
             Command::WriteTemplate => cmd::write_template::run(argv),
         }

@@ -1,2 +1,3 @@
 esmy/tests/50k_wiki_docs.json.gz filter=lfs diff=lfs merge=lfs -text
 data/50k_wiki_docs.json.gz filter=lfs diff=lfs merge=lfs -text
+data/1k_names.json.gz filter=lfs diff=lfs merge=lfs -text

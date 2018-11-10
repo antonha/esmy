@@ -1,15 +1,17 @@
+use std::io;
+use std::path::PathBuf;
+
 use docopt::Docopt;
+use serde_json;
+
 use esmy::analyzis::Analyzer;
-use esmy::full_doc::FullDocCursor;
+use esmy::doc_iter::DocIter;
 use esmy::index::IndexBuilder;
 use esmy::search;
 use esmy::search::Collector;
 use esmy::search::TextQuery;
 use esmy::seg::SegmentReader;
 use esmy::Error;
-use serde_json;
-use std::io;
-use std::path::PathBuf;
 
 static USAGE: &'static str = concat!(
     "
@@ -54,33 +56,27 @@ fn parse_query(query_string: &str, analyzer: Box<Analyzer>) -> TextQuery {
     TextQuery::new(split[0].to_string(), split[1].to_string(), analyzer)
 }
 
-struct PrintAllCollector {
-    doc_cursor: Option<FullDocCursor>,
-}
+struct PrintAllCollector {}
 
 impl PrintAllCollector {
     pub fn new() -> PrintAllCollector {
-        PrintAllCollector { doc_cursor: None }
+        PrintAllCollector {}
     }
 }
 
 impl Collector for PrintAllCollector {
-    fn set_reader(&mut self, reader: &SegmentReader) -> Result<(), Error> {
-        self.doc_cursor = Some(reader.full_doc().unwrap().cursor()?);
-        Ok(())
-    }
-
-    fn collect(&mut self, doc_id: u64) -> Result<(), Error> {
-        match &mut self.doc_cursor {
-            Some(curs) => {
-                let doc = curs.read_doc(doc_id)?;
-                //TODO error handling could be better
-                match serde_json::to_writer(io::stdout(), &doc) {
-                    _ => (),
+    fn collect_for(&mut self, reader: &SegmentReader, docs: &mut DocIter) -> Result<(), Error> {
+        if let Some(mut doc_cursor) = reader.full_doc().unwrap().cursor()? {
+            while let Some(doc_id) = docs.next_doc()? {
+                if !reader.deleted_docs().get(doc_id as usize).unwrap_or(false) {
+                    let doc = doc_cursor.read_doc(doc_id)?;
+                    //TODO error handling could be better
+                    match serde_json::to_writer(io::stdout(), &doc) {
+                        _ => (),
+                    }
+                    println!();
                 }
-                println!();
             }
-            None => {}
         }
         Ok(())
     }

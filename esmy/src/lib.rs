@@ -25,8 +25,8 @@ Esmy is a library for full text search, written in Rust. It is inspired by Lucen
 let schema = SegmentSchemaBuilder::new()
     .add_full_doc("full_doc_feature") //features have names
     .add_string_index(
-        "text_string_index", 
-        "text", 
+        "text_string_index",
+        "text",
         Box::new(UAX29Analyzer::new())) //Unicode tokenization
     .build();
 
@@ -52,11 +52,11 @@ assert_eq!(1, collector.total_count());
 
 ## Design
 
-Esmy is an information retrieval system, and takes a lot of inspiration from Lucene. The main idea is to have an inverted index, which allows you to look up which documents contain a certain term. However, often additional data structures are needed in order to be able to visualize or process the data, e.g. to create histograms of result sets or being able to do geo-search. Thus, Esmy is structured to accommodate adding new data structures. 
+Esmy is an information retrieval system, and takes a lot of inspiration from Lucene. The main idea is to have an inverted index, which allows you to look up which documents contain a certain term. However, often additional data structures are needed in order to be able to visualize or process the data, e.g. to create histograms of result sets or being able to do geo-search. Thus, Esmy is structured to accommodate adding new data structures.
 
 Esmy, as e.g. Lucene, is structured around indexes and segments. A segment is a collection of on-disk data structures, and an index is a set of segments. Segments are immutable. When adding documents to Esmy, you add some documents which are at some point *commited* to disk, at which point a segment is created. Over time, this will mean many small segments. In order to prevent having so many small segments, Esmy can merge segments into larger segments. The on-disk data structures of the segments can then be used to do something useful, e.g. searching for text.
 
-Apart from not being on the JVM, there are a few differences from Lucene. 
+Apart from not being on the JVM, there are a few differences from Lucene.
 
 One is that Lucene treats the inverted index as the core of the Library. While it is an important feature of Esmy, it's only one kind of useful data structure. Esmy instead has a concept of a *segment feature*. The inverted index is one such segment feature. The requirements on a segment feature is that you can create one from a set of documents, and that the feature can merge files that it wrote into larger files.
 
@@ -72,6 +72,7 @@ Another one is that Esmy has more opinionated (but open) view of what a document
 #![cfg_attr(feature = "cargo-clippy", warn(clippy::all))]
 #![cfg_attr(feature = "cargo-clippy", allow(clippy::implicit_hasher))]
 
+extern crate bit_vec;
 extern crate byteorder;
 extern crate fasthash;
 extern crate fst;

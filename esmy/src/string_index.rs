@@ -1,3 +1,17 @@
+use std::any::Any;
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::BufReader;
+use std::io::BufWriter;
+use std::io::Seek;
+use std::io::SeekFrom;
+use std::io::Write;
+
+use bit_vec::BitVec;
+use fst::map::OpBuilder;
+use fst::{self, Map, MapBuilder, Streamer};
+
 use analyzis::Analyzer;
 use analyzis::NoopAnalyzer;
 use analyzis::UAX29Analyzer;
@@ -5,23 +19,11 @@ use analyzis::WhiteSpaceAnalyzer;
 use doc::FieldValue;
 use doc_iter::DocIter;
 use error::Error;
-use fst::map::OpBuilder;
-use fst::{self, Map, MapBuilder, Streamer};
 use seg::Feature;
 use seg::FeatureAddress;
 use seg::FeatureConfig;
 use seg::FeatureReader;
 use seg::SegmentInfo;
-use std::any::Any;
-use std::borrow::Cow;
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::BufReader;
-use std::io::BufWriter;
-use std::io::Read;
-use std::io::Seek;
-use std::io::SeekFrom;
-use std::io::Write;
 use util::read_vint;
 use util::write_vint;
 use Doc;
@@ -51,6 +53,7 @@ impl StringIndex {
         let field_name = &self.field_name;
         let mut map: ::std::collections::BTreeMap<Cow<'a, str>, Vec<u64>> =
             ::std::collections::BTreeMap::new();
+
         for (doc_id, doc) in docs.iter().enumerate() {
             for (_name, val) in doc.iter().filter(|e| e.0 == field_name) {
                 match *val {
@@ -75,10 +78,6 @@ impl StringIndex {
         if map.is_empty() {
             return Ok(());
         }
-        let x = 3;
-        if x == 4 {
-            eprint!("foo");
-        }
         let fst_writer = BufWriter::new(File::create(address.with_ending(TERM_ID_LISTING))?);
         let mut target_terms = MapBuilder::new(fst_writer)?;
         let mut target_postings =
@@ -100,10 +99,6 @@ impl StringIndex {
 }
 
 impl Feature for StringIndex {
-    fn as_any(&self) -> &Any {
-        self
-    }
-
     fn feature_type(&self) -> &'static str {
         "string_index"
     }
@@ -136,30 +131,12 @@ impl Feature for StringIndex {
         FeatureConfig::Map(map)
     }
 
-    fn write_segment(&self, address: &FeatureAddress, docs: &[Doc]) -> Result<(), Error> {
-        self.write_docs(address, docs)
+    fn as_any(&self) -> &Any {
+        self
     }
 
-    fn merge_segments(
-        &self,
-        old_segments: &[(FeatureAddress, SegmentInfo)],
-        new_segment: &FeatureAddress,
-    ) -> Result<(), Error> {
-        let mut sources: Vec<(u64, Map, BufReader<File>)> = Vec::with_capacity(old_segments.len());
-        for (old_address, old_info) in old_segments {
-            sources.push((
-                old_info.doc_count,
-                unsafe { Map::from_path(old_address.with_ending(&TERM_ID_LISTING))? },
-                BufReader::new(File::open(old_address.with_ending(ID_DOC_LISTING))?),
-            ))
-        }
-        let target = (
-            MapBuilder::new(BufWriter::new(File::create(
-                new_segment.with_ending(&TERM_ID_LISTING),
-            )?))?,
-            BufWriter::new(File::create(new_segment.with_ending(&ID_DOC_LISTING))?),
-        );
-        do_merge(&mut sources, target)
+    fn write_segment(&self, address: &FeatureAddress, docs: &[Doc]) -> Result<(), Error> {
+        self.write_docs(address, docs)
     }
 
     fn reader(&self, address: &FeatureAddress) -> Result<Box<FeatureReader>, Error> {
@@ -181,6 +158,111 @@ impl Feature for StringIndex {
                 }
             }))
         }
+    }
+
+    fn merge_segments(
+        &self,
+        old_segments: &[(FeatureAddress, SegmentInfo, BitVec)],
+        new_segment: &FeatureAddress,
+    ) -> Result<(), Error> {
+        let target_terms_path = new_segment.with_ending(&TERM_ID_LISTING);
+        let target_terms_file = File::create(&target_terms_path)?;
+
+        let mut target_term_map = MapBuilder::new(BufWriter::new(target_terms_file))?;
+        let target_postings_path = new_segment.with_ending(&ID_DOC_LISTING);
+        let target_postings_file = File::create(&target_postings_path)?;
+        let mut target_postings = BufWriter::new(target_postings_file);
+
+        let (
+            ref mut source_terms,
+            ref mut source_postings,
+            ref source_doc_offsets,
+            ref mut deletions,
+            ref mut deleted_remap,
+        ) = {
+            let mut source_terms = Vec::new();
+            let mut source_postings = Vec::new();
+            let mut source_doc_offsets = Vec::new();
+            let mut source_offset = 0u64;
+            let mut deletions = Vec::new();
+            let mut deleted_remap = Vec::new();
+            for (old_address, old_info, deleted_docs) in old_segments {
+                let old_terms_path = old_address.with_ending(&TERM_ID_LISTING);
+                if old_terms_path.exists() {
+                    let source_term = unsafe { Map::from_path(old_terms_path)? };
+                    source_terms.push(source_term);
+                    source_postings.push(BufReader::new(File::open(
+                        old_address.with_ending(ID_DOC_LISTING),
+                    )?));
+                    source_doc_offsets.push(source_offset);
+                    source_offset +=
+                        old_info.doc_count - deleted_docs.iter().filter(|b| *b).count() as u64;
+                    deleted_remap.push(remap_deleted(&deleted_docs));
+                    deletions.push(deleted_docs);
+                }
+            }
+            (
+                source_terms,
+                source_postings,
+                source_doc_offsets,
+                deletions,
+                deleted_remap,
+            )
+        };
+
+        let mut op_builder = OpBuilder::new();
+        for map in source_terms {
+            op_builder.push(map.stream());
+        }
+        let mut union = op_builder.union();
+        let mut postings_offset = 0u64;
+        let mut has_written = false;
+        while let Some((term, term_offsets)) = union.next() {
+            let mut sorted_offsets = term_offsets.to_vec();
+            sorted_offsets.sort_by_key(|o| o.index);
+
+            let mut docs_to_write = Vec::new();
+            for term_offset in &sorted_offsets {
+                let mut source_posting = &mut source_postings[term_offset.index];
+                source_posting.seek(SeekFrom::Start(term_offset.value as u64))?;
+                let term_doc_count: u64 = read_vint(source_posting)?;
+                let mut last_read_doc_id = 0;
+                for _i in 0..term_doc_count {
+                    let diff = read_vint(&mut source_posting)?;
+                    let read_doc_id = last_read_doc_id + diff;
+                    last_read_doc_id = read_doc_id;
+                    if !deletions[term_offset.index]
+                        .get(read_doc_id as usize)
+                        .unwrap_or(false)
+                    {
+                        docs_to_write.push(
+                            source_doc_offsets[term_offset.index]
+                                + deleted_remap[term_offset.index][read_doc_id as usize],
+                        );
+                    }
+                }
+            }
+
+            if !docs_to_write.is_empty() {
+                has_written = true;
+                target_term_map.insert(term, postings_offset)?;
+                let mut last_written_doc_id = 0u64;
+                postings_offset +=
+                    write_vint(&mut target_postings, docs_to_write.len() as u64)? as u64;
+                for doc in docs_to_write {
+                    postings_offset +=
+                        write_vint(&mut target_postings, doc - last_written_doc_id)? as u64;
+                    last_written_doc_id = doc;
+                }
+            }
+        }
+        target_term_map.finish()?;
+        target_postings.flush()?;
+        if !has_written {
+            ::std::fs::remove_file(&target_postings_path)?;
+            ::std::fs::remove_file(&target_terms_path)?;
+        }
+        Ok(())
     }
 }
 
@@ -232,14 +314,6 @@ pub struct TermDocIter {
 }
 
 impl DocIter for TermDocIter {
-    fn current_doc(&self) -> Option<DocId> {
-        if self.finished {
-            None
-        } else {
-            Some(self.current_doc_id)
-        }
-    }
-
     fn next_doc(&mut self) -> Result<Option<DocId>, Error> {
         if self.left != 0 {
             self.left -= 1;
@@ -255,6 +329,14 @@ impl DocIter for TermDocIter {
             Ok(None)
         }
     }
+
+    fn current_doc(&self) -> Option<DocId> {
+        if self.finished {
+            None
+        } else {
+            Some(self.current_doc_id)
+        }
+    }
 }
 
 impl From<fst::Error> for Error {
@@ -263,58 +345,14 @@ impl From<fst::Error> for Error {
     }
 }
 
-fn do_merge<R, W>(sources: &mut [(u64, Map, R)], target: (MapBuilder<W>, W)) -> Result<(), Error>
-where
-    W: Write + Sized,
-    R: Read + Seek + Sized,
-{
-    let (mut term_builder, mut target_postings) = target;
-    let (ref mut new_offsets, ref mut union, ref mut source_postings) = {
-        let mut new_offset = 0u64;
-        let mut new_offsets = Vec::with_capacity(sources.len());
-
-        let mut op_builder = OpBuilder::new();
-        let mut source_postings = Vec::new();
-        for (doc_count, source_terms, source_posting) in sources.into_iter() {
-            op_builder.push(source_terms.stream());
-            new_offsets.push(new_offset);
-            new_offset += *doc_count;
-            source_postings.push(source_posting);
-        }
-        (new_offsets, op_builder.union(), source_postings)
-    };
-
-    let mut offset = 0u64;
-    while let Some((term, term_offsets)) = union.next() {
-        let mut sorted_offsets = term_offsets.to_vec();
-        sorted_offsets.sort_by_key(|o| o.index);
-        term_builder.insert(term, offset)?;
-
-        let mut term_doc_counts: Vec<u64> = vec![0; source_postings.len()];
-        for term_offset in &sorted_offsets {
-            let mut source_posting = &mut source_postings[term_offset.index];
-            source_posting.seek(SeekFrom::Start(term_offset.value as u64))?;
-            term_doc_counts[term_offset.index] = read_vint(&mut source_posting)?;
-        }
-
-        let term_doc_count: u64 = term_doc_counts.iter().sum();
-        offset += u64::from(write_vint(&mut target_postings, term_doc_count)?);
-        let mut last_written_doc_id = 0u64;
-        for term_offset in &sorted_offsets {
-            let mut source_posting = &mut source_postings[term_offset.index];
-            let mut last_read_doc_id = 0u64;
-            for _i in 0..term_doc_counts[term_offset.index] {
-                let diff = read_vint(&mut source_posting)?;
-                let read_doc_id = last_read_doc_id + diff;
-                let doc_id_to_write = new_offsets[term_offset.index] + read_doc_id;
-                let diff_to_write = doc_id_to_write - last_written_doc_id;
-                offset += u64::from(write_vint(&mut target_postings, diff_to_write)?);
-                last_read_doc_id = read_doc_id;
-                last_written_doc_id = doc_id_to_write;
-            }
+fn remap_deleted(deleted_docs: &BitVec) -> Vec<u64> {
+    let mut new_doc = 0u64;
+    let mut ids = Vec::with_capacity(deleted_docs.len());
+    for (_doc, deleted) in deleted_docs.iter().enumerate() {
+        ids.push(new_doc);
+        if !deleted {
+            new_doc += 1;
         }
     }
-    term_builder.finish()?;
-    target_postings.flush()?;
-    Ok(())
+    ids
 }
