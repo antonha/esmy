@@ -7,10 +7,12 @@ Esmy is a library for full text search, written in Rust. It is inspired by Lucen
 * Text indexing with different analyzers.
 * Text search, including phrases.
 * Parallel indexing
+* Document deletions
+* Quite fast
 
 ## Roadmap
 * Document scoring
-* Document deletions
+* ~~Document deletions~~
 * Doc-values data structures (fast access to values of fields)
 * Improve merge concurrency
 * More query types (e.g. spans, more boolean logic)
