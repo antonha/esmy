@@ -1,5 +1,4 @@
 use std::any::Any;
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
@@ -9,15 +8,21 @@ use std::io::SeekFrom;
 use std::io::Write;
 
 use bit_vec::BitVec;
-use fst::map::OpBuilder;
+use fasthash::RandomState;
+use fasthash::sea::SeaHash;
 use fst::{self, Map, MapBuilder, Streamer};
+use fst::map::OpBuilder;
+use indexmap::IndexMap;
+use indexmap::map;
 
 use analyzis::Analyzer;
 use analyzis::NoopAnalyzer;
 use analyzis::UAX29Analyzer;
 use analyzis::WhiteSpaceAnalyzer;
+use Doc;
 use doc::FieldValue;
 use doc_iter::DocIter;
+use DocId;
 use error::Error;
 use seg::Feature;
 use seg::FeatureAddress;
@@ -26,8 +31,6 @@ use seg::FeatureReader;
 use seg::SegmentInfo;
 use util::read_vint;
 use util::write_vint;
-use Doc;
-use DocId;
 
 const TERM_ID_LISTING: &str = "tid";
 const ID_DOC_LISTING: &str = "iddoc";
@@ -51,8 +54,8 @@ impl StringIndex {
     fn write_docs<'a>(&self, address: &FeatureAddress, docs: &'a [Doc]) -> Result<(), Error> {
         let analyzer = &self.analyzer;
         let field_name = &self.field_name;
-        let mut map: ::std::collections::BTreeMap<Cow<'a, str>, Vec<u64>> =
-            ::std::collections::BTreeMap::new();
+        let s = RandomState::<SeaHash>::new();
+        let mut map = IndexMap::with_hasher(s);
 
         for (doc_id, doc) in docs.iter().enumerate() {
             for (_name, val) in doc.iter().filter(|e| e.0 == field_name) {
@@ -60,10 +63,10 @@ impl StringIndex {
                     FieldValue::String(ref value) => {
                         for token in analyzer.analyze(value) {
                             match map.entry(token) {
-                                ::std::collections::btree_map::Entry::Vacant(vacant) => {
+                                map::Entry::Vacant(vacant) => {
                                     vacant.insert(vec![doc_id as u64]);
                                 }
-                                ::std::collections::btree_map::Entry::Occupied(mut occupied) => {
+                                map::Entry::Occupied(mut occupied) => {
                                     let term_docs = occupied.get_mut();
                                     if *term_docs.last().unwrap() != doc_id as u64 {
                                         term_docs.push(doc_id as u64)
@@ -78,6 +81,7 @@ impl StringIndex {
         if map.is_empty() {
             return Ok(());
         }
+        map.sort_keys();
         let fst_writer = BufWriter::new(File::create(address.with_ending(TERM_ID_LISTING))?);
         let mut target_terms = MapBuilder::new(fst_writer)?;
         let mut target_postings =
@@ -234,12 +238,12 @@ impl Feature for StringIndex {
                     if !deletions[term_offset.index]
                         .get(read_doc_id as usize)
                         .unwrap_or(false)
-                    {
-                        docs_to_write.push(
-                            source_doc_offsets[term_offset.index]
-                                + deleted_remap[term_offset.index][read_doc_id as usize],
-                        );
-                    }
+                        {
+                            docs_to_write.push(
+                                source_doc_offsets[term_offset.index]
+                                    + deleted_remap[term_offset.index][read_doc_id as usize],
+                            );
+                        }
                 }
             }
 
