@@ -12,7 +12,8 @@ use bit_vec::BitVec;
 use byteorder::BigEndian;
 use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
-use flate2::Compression;
+use lz4::Decoder;
+use lz4::EncoderBuilder;
 use rmps;
 use serde::Serialize;
 
@@ -23,6 +24,7 @@ use seg::FeatureAddress;
 use seg::FeatureConfig;
 use seg::FeatureReader;
 use seg::SegmentInfo;
+use lz4::Encoder;
 
 trait Offsets {
     fn new(file_offset: u64, block_offset: u64) -> Self;
@@ -45,19 +47,26 @@ impl Offsets for u64 {
 
 #[derive(Clone, Default)]
 pub struct FullDoc {
-    compression: Compression,
+    level: Option<u32>,
 }
 
 impl FullDoc {
     pub fn new() -> FullDoc {
         FullDoc {
-            compression: Compression::default(),
+            level: None
         }
     }
 
     pub fn with_compression_level(compression_level: u32) -> FullDoc {
         FullDoc {
-            compression: Compression::new(compression_level),
+            level: Some(compression_level)
+        }
+    }
+
+    fn create_encoder<W: Write>(&self, writer: W) -> Result<Encoder<W>, Error> {
+        match self.level {
+            Some(level) => Ok(EncoderBuilder::new().level(level).build(writer)?),
+            None => Ok(EncoderBuilder::new().build(writer)?)
         }
     }
 }
@@ -68,19 +77,20 @@ impl Feature for FullDoc {
     }
 
     fn from_config(config: FeatureConfig) -> Self {
-        let compression = config
+        let level = config
             .int_at("compression_level")
-            .map(|level| Compression::new(level as u32))
-            .unwrap_or(Compression::default());
-        FullDoc { compression }
+            .map(|n| n as u32);
+        FullDoc { level }
     }
 
     fn to_config(&self) -> FeatureConfig {
         let mut map = HashMap::new();
-        map.insert(
-            "compression_level".to_string(),
-            FeatureConfig::Int(self.compression.level() as i64),
-        );
+        if let Some(level) = self.level {
+            map.insert(
+                "compression_level".to_string(),
+                FeatureConfig::Int(level as i64),
+            );
+        }
         FeatureConfig::Map(map)
     }
 
@@ -89,25 +99,29 @@ impl Feature for FullDoc {
     }
 
     fn write_segment(&self, address: &FeatureAddress, docs: &[Doc]) -> Result<(), Error> {
-        let mut file_offset = 0u64;
+        let mut block_file_offset = 0u64;
         let mut doc_offsets = BufWriter::new(File::create(address.with_ending("fdo"))?);
-        let mut doc_buf_writer = File::create(address.with_ending("fdv"))?;
-        let mut writer = ::flate2::write::DeflateEncoder::new(doc_buf_writer, self.compression);
+        let doc_buf_writer = BufWriter::new(File::create(address.with_ending("fdv"))?);
+        let mut encoder = self.create_encoder(doc_buf_writer)?;
         let mut block_offset = 0;
         for doc in docs {
-            doc_offsets.write_u64::<BigEndian>(Offsets::new(file_offset, block_offset))?;
-            doc.serialize(&mut rmps::Serializer::new(&mut writer))
+            doc_offsets.write_u64::<BigEndian>(Offsets::new(block_file_offset, block_offset))?;
+            doc.serialize(&mut rmps::Serializer::new(&mut encoder))
                 .unwrap();
             block_offset += 1;
-            if writer.total_out() > 16384 || block_offset % 4096 == 0 {
-                doc_buf_writer = writer.finish()?;
+            //TODO don't write larger
+            if block_offset % 4096 == 0 {
+                let (mut doc_buf_writer, res) = encoder.finish();
+                //Force get result of writing
+                res?;
                 doc_buf_writer.flush()?;
-                file_offset = doc_buf_writer.seek(SeekFrom::Current(0))?;
-                writer = ::flate2::write::DeflateEncoder::new(doc_buf_writer, self.compression);
+                block_file_offset = doc_buf_writer.seek(SeekFrom::Current(0))?;
+                encoder = EncoderBuilder::new().build(doc_buf_writer)?;
                 block_offset = 0;
             }
         }
-        doc_buf_writer = writer.finish()?;
+        let (mut doc_buf_writer, res) = encoder.finish();
+        res?;
         doc_buf_writer.flush()?;
         doc_offsets.flush()?;
         Ok(())
@@ -127,7 +141,7 @@ impl Feature for FullDoc {
         let target_offset_path = new_segment.with_ending("fdo");
         let mut target_val_offset_file = BufWriter::new(File::create(&target_offset_path)?);
         let target_value_path = new_segment.with_ending("fdv");
-        let mut target_val_file = File::create(&target_value_path)?;
+        let mut target_val_file = BufWriter::new(File::create(&target_value_path)?);
         let mut base_offset = 0u64;
         let mut has_written = false;
         for (feature_address, info, deleted_docs) in old_segments.iter() {
@@ -163,8 +177,7 @@ impl Feature for FullDoc {
                     //Know that we can unwrap since offsets file exists
                     let mut cursor = reader.cursor()?.unwrap();
                     let mut file_offset = target_val_file.seek(SeekFrom::Current(0))?;
-                    let mut writer =
-                        ::flate2::write::DeflateEncoder::new(target_val_file, self.compression);
+                    let mut encoder = self.create_encoder(target_val_file)?;
                     let mut block_offset = 0;
                     for doc_id in 0..info.doc_count {
                         if !deleted_docs.get(doc_id as usize).unwrap() {
@@ -172,22 +185,24 @@ impl Feature for FullDoc {
                             let doc = cursor.read_doc(doc_id)?;
                             target_val_offset_file
                                 .write_u64::<BigEndian>(Offsets::new(file_offset, block_offset))?;
-                            doc.serialize(&mut rmps::Serializer::new(&mut writer))
+                            doc.serialize(&mut rmps::Serializer::new(&mut encoder))
                                 .unwrap();
                             block_offset += 1;
-                            if writer.total_out() > 16384 || block_offset % 4096 == 0 {
-                                target_val_file = writer.finish()?;
+                            //TODO max size
+                            if false || block_offset % 4096 == 0 {
+                                let (mut tf, res) = encoder.finish();
+                                res?;
+                                target_val_file = tf;
                                 target_val_file.flush()?;
                                 file_offset = target_val_file.seek(SeekFrom::Current(0))?;
-                                writer = ::flate2::write::DeflateEncoder::new(
-                                    target_val_file,
-                                    self.compression,
-                                );
+                                encoder = self.create_encoder(target_val_file)?;
                                 block_offset = 0;
                             }
                         }
                     }
-                    target_val_file = writer.finish()?;
+                    let (mut tf, res) = encoder.finish();
+                    res?;
+                    target_val_file = tf;
                     target_val_file.flush()?;
                     base_offset = target_val_file.seek(SeekFrom::Current(0))?;
                 }
@@ -225,7 +240,7 @@ pub struct FullDocCursor {
     offsets_file: File,
     deserializer: Option<
         ::rmps::Deserializer<
-            ::rmps::decode::ReadReader<::flate2::bufread::DeflateDecoder<BufReader<File>>>,
+            ::rmps::decode::ReadReader<Decoder<BufReader<File>>>,
         >,
     >,
 }
@@ -239,9 +254,9 @@ impl FullDocCursor {
                 next_doc: 0,
                 offsets_file: File::open(source_offset_path)?,
                 deserializer: Some(::rmps::Deserializer::new(
-                    ::flate2::bufread::DeflateDecoder::new(BufReader::new(File::open(
+                    Decoder::new(BufReader::new(File::open(
                         address.with_ending("fdv"),
-                    )?)),
+                    )?))?,
                 )),
             }))
         } else {
@@ -254,10 +269,13 @@ impl FullDocCursor {
         let offsets = self.offsets_file.read_u64::<BigEndian>()?;
         if offsets.file_offset() != self.curr_block {
             let old_deser = ::std::mem::replace(&mut self.deserializer, None);
-            let mut file = old_deser.unwrap().into_inner().into_inner().into_inner();
+            //Ignore error on purpose, only errors if we have not read all things in stream
+            let (buf_reader, _res) = old_deser.unwrap().into_inner().finish();
+
+            let mut file = buf_reader.into_inner();
             file.seek(SeekFrom::Start(offsets.file_offset()))?;
             self.deserializer = Some(::rmps::Deserializer::new(
-                ::flate2::bufread::DeflateDecoder::new(BufReader::new(file)),
+                Decoder::new(BufReader::new(file))?,
             ));
             self.next_doc = 0;
             self.curr_block = offsets.file_offset();
