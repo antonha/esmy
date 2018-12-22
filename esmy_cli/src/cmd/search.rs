@@ -19,8 +19,8 @@ static USAGE: &'static str = concat!(
 Searches and prints all results from an esmy sorted by score.
 
 Usage:
-    esmy list <query> [options]
-    esmy list --help
+    esmy search <query> [options]
+    esmy search --help
 
 Options::
     -p, --path <path>           Path to index to
