@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Anton Hägerstrand <anton.hagerstrand@gmail.com>"]
 
 [dependencies]
+binary-heap-plus = "0.1"
 indexmap = "1"
 fasthash = "0.3"
 smallvec = "0.6"

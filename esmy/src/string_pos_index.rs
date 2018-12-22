@@ -8,22 +8,24 @@ use std::io::SeekFrom;
 use std::io::Write;
 
 use bit_vec::BitVec;
-use fasthash::sea::SeaHash;
 use fasthash::RandomState;
-use fst::map::OpBuilder;
+use fasthash::sea::SeaHash;
 use fst::{Map, MapBuilder, Streamer};
-use indexmap::map;
+use fst::map::OpBuilder;
 use indexmap::IndexMap;
+use indexmap::map;
 use smallvec::SmallVec;
 
 use analyzis::Analyzer;
 use analyzis::NoopAnalyzer;
 use analyzis::UAX29Analyzer;
 use analyzis::WhiteSpaceAnalyzer;
+use Doc;
 use doc::FieldValue;
 use doc_iter::DocIter;
 use doc_iter::DocSpansIter;
 use doc_iter::Position;
+use DocId;
 use error::Error;
 use seg::Feature;
 use seg::FeatureAddress;
@@ -32,8 +34,6 @@ use seg::FeatureReader;
 use seg::SegmentInfo;
 use util::read_vint;
 use util::write_vint;
-use Doc;
-use DocId;
 
 const TERM_ID_LISTING: &str = "tid";
 const ID_DOC_LISTING: &str = "iddoc";
@@ -289,20 +289,20 @@ impl Feature for StringPosIndex {
                     if !deletions[term_offset.index]
                         .get(read_doc_id as usize)
                         .unwrap_or(false)
-                    {
-                        let mut positions = Vec::new();
-                        let num_positions = read_vint(source_position)?;
-                        let mut last_read_position = 0u64;
-                        for _j in 0..num_positions {
-                            let pos_diff = read_vint(source_position)?;
-                            let read_position = last_read_position + pos_diff;
-                            positions.push(read_position);
-                            last_read_position = read_position;
+                        {
+                            let mut positions = Vec::new();
+                            let num_positions = read_vint(source_position)?;
+                            let mut last_read_position = 0u64;
+                            for _j in 0..num_positions {
+                                let pos_diff = read_vint(source_position)?;
+                                let read_position = last_read_position + pos_diff;
+                                positions.push(read_position);
+                                last_read_position = read_position;
+                            }
+                            let doc_id_to_write = source_doc_offsets[term_offset.index]
+                                + deleted_remap[term_offset.index][read_doc_id as usize];
+                            docs_to_write.push((doc_id_to_write, positions));
                         }
-                        let doc_id_to_write = source_doc_offsets[term_offset.index]
-                            + deleted_remap[term_offset.index][read_doc_id as usize];
-                        docs_to_write.push((doc_id_to_write, positions));
-                    }
                 }
             }
 
@@ -371,6 +371,7 @@ impl StringPosIndexReader {
                 let num = read_vint(&mut iddoc)?;
                 let mut pos = BufReader::new(File::open(self.address.with_ending("pos"))?);
                 Ok(Some(TermDocSpansIter {
+                    count: num,
                     doc_file: iddoc,
                     pos_file: pos,
                     current_doc_id: 0,
@@ -379,6 +380,7 @@ impl StringPosIndexReader {
                     pos_left: 0,
                     finished: false,
                     new_pos_offset: false,
+                    pos_count: 0,
                     left: num,
                 }))
             }
@@ -394,18 +396,41 @@ impl StringPosIndexReader {
 }
 
 pub struct TermDocSpansIter {
+    total_num_docs: u64,
+    count: u64,
     doc_file: BufReader<File>,
     pos_file: BufReader<File>,
     current_doc_id: DocId,
     current_pos_offset: u64,
     current_pos: u64,
     pos_left: u64,
+    pos_count: u64,
     finished: bool,
     new_pos_offset: bool,
     left: u64,
 }
 
+impl TermDocSpansIter {
+    pub fn doc_count(&self) -> u64 {
+        self.count
+    }
+
+    pub fn pos_count(&self) -> u64 {
+        self.pos_count
+    }
+}
+
 impl DocIter for TermDocSpansIter {
+    fn score(&self) -> Option<f32> {
+        if self.finished {
+            None
+        } else {
+            //Basic tf-idf, bm25 coming up
+            let tf_idf = (self.pos_count as f32) / (self.total_num_docs as f32 / self.count as f32).log(2f32);
+            Some(tf_idf)
+        }
+    }
+
     fn next_doc(&mut self) -> Result<Option<DocId>, Error> {
         if self.left != 0 {
             self.left -= 1;
@@ -437,6 +462,7 @@ impl DocSpansIter for TermDocSpansIter {
             self.pos_file
                 .seek(SeekFrom::Start(self.current_pos_offset))?;
             self.pos_left = read_vint(&mut self.pos_file)?;
+            self.pos_count = self.pos_left;
             self.current_pos = 0;
         }
         if self.pos_left == 0 {

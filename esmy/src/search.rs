@@ -1,8 +1,12 @@
 use std::any::Any;
+use std::cmp::Ord;
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 use std::fmt::Debug;
 
 use analyzis::Analyzer;
 use analyzis::NoopAnalyzer;
+use Doc;
 use doc::FieldValue;
 use doc_iter::AllDocIter;
 use doc_iter::AllDocsDocIter;
@@ -10,10 +14,9 @@ use doc_iter::DocIter;
 use doc_iter::DocSpansIter;
 use doc_iter::OrderedNearDocSpansIter;
 use doc_iter::VecDocIter;
+use DocId;
 use index::ManagedIndexReader;
 use seg::SegmentReader;
-use Doc;
-use DocId;
 
 use super::Error;
 
@@ -55,8 +58,8 @@ pub trait QueryClone {
 }
 
 impl<T> QueryClone for T
-where
-    T: 'static + Query + Clone,
+    where
+        T: 'static + Query + Clone,
 {
     fn clone_box(&self) -> Box<Query> {
         Box::new(self.clone())
@@ -77,9 +80,9 @@ pub struct ValueQuery {
 
 impl<'a> ValueQuery {
     pub fn new<F, V>(field: F, value: V) -> ValueQuery
-    where
-        F: Into<String>,
-        V: Into<String>,
+        where
+            F: Into<String>,
+            V: Into<String>,
     {
         ValueQuery {
             field: field.into(),
@@ -171,9 +174,9 @@ pub struct TextQuery {
 
 impl TextQuery {
     pub fn new<N, V>(field: N, value: V, analyzer: Box<Analyzer>) -> TextQuery
-    where
-        N: Into<String>,
-        V: Into<String>,
+        where
+            N: Into<String>,
+            V: Into<String>,
     {
         let v = value.into();
         let values = analyzer
@@ -197,13 +200,13 @@ impl Query for TextQuery {
                     None => Ok(None),
                 }
             } else if let Some(string_pos_index_reader) =
-                reader.string_pos_index(&self.field, &*self.analyzer)
-            {
-                return match string_pos_index_reader.doc_spans_iter(&self.values[0])? {
-                    Some(iter) => Ok(Some(Box::from(iter))),
-                    None => Ok(None),
-                };
-            } else if let Some(full_doc_reader) = reader.full_doc() {
+            reader.string_pos_index(&self.field, &*self.analyzer)
+                {
+                    return match string_pos_index_reader.doc_spans_iter(&self.values[0])? {
+                        Some(iter) => Ok(Some(Box::from(iter))),
+                        None => Ok(None),
+                    };
+                } else if let Some(full_doc_reader) = reader.full_doc() {
                 let mut doc_ids = Vec::new();
                 if let Some(mut cursor) = full_doc_reader.cursor()? {
                     for doc_id in 0..reader.info().doc_count {
@@ -218,20 +221,20 @@ impl Query for TextQuery {
                 panic!()
             }
         } else if let Some(string_pos_reader) =
-            reader.string_pos_index(&self.field, &*self.analyzer)
-        {
-            let mut sub_spans = Vec::new();
-            for v in &self.values {
-                if let Some(sub_span) = string_pos_reader.doc_spans_iter(&v)? {
-                    sub_spans.push(Box::new(sub_span) as Box<DocSpansIter>);
-                } else {
-                    return Ok(None);
+        reader.string_pos_index(&self.field, &*self.analyzer)
+            {
+                let mut sub_spans = Vec::new();
+                for v in &self.values {
+                    if let Some(sub_span) = string_pos_reader.doc_spans_iter(&v)? {
+                        sub_spans.push(Box::new(sub_span) as Box<DocSpansIter>);
+                    } else {
+                        return Ok(None);
+                    }
                 }
-            }
-            return Ok(Some(
-                Box::new(OrderedNearDocSpansIter::new(sub_spans)) as Box<DocIter>
-            ));
-        } else if let Some(string_reader) = reader.string_index(&self.field, &*self.analyzer) {
+                return Ok(Some(
+                    Box::new(OrderedNearDocSpansIter::new(sub_spans)) as Box<DocIter>
+                ));
+            } else if let Some(string_reader) = reader.string_index(&self.field, &*self.analyzer) {
             let mut sub: Vec<Box<DocIter>> = Vec::with_capacity(self.values.len());
             for v in &self.values {
                 match string_reader.doc_iter(&v)? {
@@ -389,6 +392,59 @@ impl Collector for AllDocsCollector {
                 if !reader.deleted_docs().get(doc_id as usize).unwrap_or(false) {
                     let doc = doc_cursor.read_doc(doc_id).unwrap();
                     self.docs.push(doc);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(PartialEq, Eq)]
+pub struct ScoredDoc {
+    score: f32,
+    doc: Doc,
+}
+
+impl ScoredDoc {
+    pub fn doc(&self) -> &Doc {
+        &self.doc
+    }
+}
+
+impl Ord for ScoredDoc {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.score.partial_cmp(&other.score) {
+            Some(ordering) => ordering,
+            None => Ordering::Equal
+        }
+    }
+}
+
+pub struct TopDocsCollector {
+    heap: BinaryHeap<ScoredDoc>
+}
+
+impl TopDocsCollector {
+    pub fn new(num_docs: usize) -> TopDocsCollector {
+        TopDocsCollector {
+            heap: BinaryHeap::with_capacity(num_docs)
+        }
+    }
+
+    pub fn docs(&self) -> &[(f32, Doc)] {
+        &self.docs
+    }
+
+    fn insert_if_(score: f32, doc: Doc) {}
+}
+
+impl Collector for TopDocsCollector {
+    fn collect_for(&mut self, reader: &SegmentReader, docs: &mut DocIter) -> Result<(), Error> {
+        if let Some(mut doc_cursor) = reader.full_doc().unwrap().cursor()? {
+            while let Some(doc_id) = docs.next_doc().unwrap() {
+                if !reader.deleted_docs().get(doc_id as usize).unwrap_or(false) {
+                    let doc = doc_cursor.read_doc(doc_id).unwrap();
+                    self.docs.push(docs.score(), doc);
                 }
             }
         }

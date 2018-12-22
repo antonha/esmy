@@ -81,6 +81,7 @@ extern crate rand;
 extern crate smallvec;
 extern crate unicode_segmentation;
 extern crate walkdir;
+extern crate binary_heap_plus;
 
 extern crate num_cpus;
 extern crate rayon;

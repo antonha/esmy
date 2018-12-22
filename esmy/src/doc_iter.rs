@@ -1,9 +1,14 @@
 use std::collections::BTreeSet;
 use std::collections::VecDeque;
+
 use DocId;
 use Error;
 
 pub trait DocIter {
+    fn score(&self) -> Option<f32> {
+        Some(0.0)
+    }
+
     fn next_doc(&mut self) -> Result<Option<DocId>, Error>;
     fn advance(&mut self, target: DocId) -> Result<Option<DocId>, Error> {
         loop {
@@ -26,6 +31,7 @@ pub trait DocIter {
 }
 
 pub type Position = u64;
+
 pub trait DocSpansIter: DocIter {
     fn next_start_pos(&mut self) -> Result<Option<Position>, Error>;
     fn start_pos(&self) -> Option<Position>;
