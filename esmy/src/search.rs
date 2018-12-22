@@ -429,7 +429,7 @@ impl PartialOrd for ScoredDoc {
 }
 
 pub struct TopDocsCollector {
-    heap: BinaryHeap<ScoredDoc>
+    heap: BinaryHeap<ScoredDoc>,
     num_docs: usize
 }
 
@@ -453,7 +453,6 @@ impl Collector for TopDocsCollector {
                 if !reader.deleted_docs().get(doc_id as usize).unwrap_or(false) {
                     let doc = doc_cursor.read_doc(doc_id).unwrap();
                     self.heap.push(ScoredDoc { score: docs.score().unwrap(), doc });
-                    self.heap.shrink_to(self.num_docs)
                 }
             }
         }
