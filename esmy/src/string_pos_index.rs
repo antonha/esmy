@@ -389,7 +389,6 @@ impl StringPosIndexReader {
                     current_pos: 0,
                     pos_left: 0,
                     finished: false,
-                    new_pos_offset: false,
                     pos_count: 0,
                     left: num,
                 }))
@@ -416,7 +415,6 @@ pub struct TermDocSpansIter {
     pos_left: u64,
     pos_count: u64,
     finished: bool,
-    new_pos_offset: bool,
     left: u64,
 }
 
@@ -437,6 +435,7 @@ impl DocIter for TermDocSpansIter {
         } else {
             //Basic tf-idf, bm25 coming up
             let tf_idf = (self.pos_count as f32) / (self.total_num_docs as f32 / self.count as f32).log(2f32);
+            eprintln!("TF-IDF: {}", tf_idf);
             Some(tf_idf)
         }
     }
@@ -448,7 +447,11 @@ impl DocIter for TermDocSpansIter {
             self.current_doc_id += doc_diff;
             let pos_offset_diff = read_vint(&mut self.doc_file)?;
             self.current_pos_offset += pos_offset_diff;
-            self.new_pos_offset = true;
+            self.pos_file
+                .seek(SeekFrom::Start(self.current_pos_offset))?;
+            self.pos_left = read_vint(&mut self.pos_file)?;
+            self.pos_count = self.pos_left;
+            self.current_pos = 0;
             Ok(Some(self.current_doc_id))
         } else {
             self.finished = true;
@@ -467,14 +470,6 @@ impl DocIter for TermDocSpansIter {
 
 impl DocSpansIter for TermDocSpansIter {
     fn next_start_pos(&mut self) -> Result<Option<Position>, Error> {
-        if self.new_pos_offset {
-            self.new_pos_offset = false;
-            self.pos_file
-                .seek(SeekFrom::Start(self.current_pos_offset))?;
-            self.pos_left = read_vint(&mut self.pos_file)?;
-            self.pos_count = self.pos_left;
-            self.current_pos = 0;
-        }
         if self.pos_left == 0 {
             return Ok(None);
         }
