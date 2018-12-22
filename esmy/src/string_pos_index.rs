@@ -183,6 +183,7 @@ impl Feature for StringPosIndex {
         if path.exists() {
             Ok(Box::new({
                 StringPosIndexReader {
+                    total_doc_count: address.segment.read_info()?.doc_count,
                     feature: self.clone(),
                     address: address.clone(),
                     map: Some(unsafe { Map::from_path(path)? }),
@@ -191,6 +192,7 @@ impl Feature for StringPosIndex {
         } else {
             Ok(Box::new({
                 StringPosIndexReader {
+                    total_doc_count: address.segment.read_info()?.doc_count,
                     feature: self.clone(),
                     address: address.clone(),
                     map: None,
@@ -348,9 +350,16 @@ impl Feature for StringPosIndex {
 }
 
 pub struct StringPosIndexReader {
-    pub feature: StringPosIndex,
-    pub address: FeatureAddress,
-    pub map: Option<Map>,
+    feature: StringPosIndex,
+    address: FeatureAddress,
+    map: Option<Map>,
+    total_doc_count: u64,
+}
+
+impl StringPosIndexReader {
+    pub fn feature(&self) -> &StringPosIndex {
+        &self.feature
+    }
 }
 
 impl FeatureReader for StringPosIndexReader {
@@ -371,6 +380,7 @@ impl StringPosIndexReader {
                 let num = read_vint(&mut iddoc)?;
                 let mut pos = BufReader::new(File::open(self.address.with_ending("pos"))?);
                 Ok(Some(TermDocSpansIter {
+                    total_num_docs: self.total_doc_count,
                     count: num,
                     doc_file: iddoc,
                     pos_file: pos,

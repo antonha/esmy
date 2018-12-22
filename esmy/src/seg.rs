@@ -500,8 +500,8 @@ impl SegmentReader {
     ) -> Option<&StringPosIndexReader> {
         for reader in self.readers.values() {
             if let Some(reader) = reader.as_any().downcast_ref::<StringPosIndexReader>() {
-                if reader.feature.field_name == field_name
-                    && analyzer.analyzer_type() == reader.feature.analyzer.analyzer_type()
+                if reader.feature().field_name == field_name
+                    && analyzer.analyzer_type() == reader.feature().analyzer.analyzer_type()
                 {
                     return Some(reader);
                 }

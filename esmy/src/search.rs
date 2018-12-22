@@ -399,7 +399,7 @@ impl Collector for AllDocsCollector {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq)]
 pub struct ScoredDoc {
     score: f32,
     doc: Doc,
@@ -413,10 +413,17 @@ impl ScoredDoc {
 
 impl Ord for ScoredDoc {
     fn cmp(&self, other: &Self) -> Ordering {
-        match self.score.partial_cmp(&other.score) {
-            Some(ordering) => ordering,
-            None => Ordering::Equal
-        }
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+impl Eq for ScoredDoc {
+
+}
+
+impl PartialOrd for ScoredDoc {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.score.partial_cmp(&other.score)
     }
 }
 
@@ -431,11 +438,9 @@ impl TopDocsCollector {
         }
     }
 
-    pub fn docs(&self) -> &[(f32, Doc)] {
-        &self.docs
+    pub fn docs(&self) -> &BinaryHeap<ScoredDoc> {
+        &self.heap
     }
-
-    fn insert_if_(score: f32, doc: Doc) {}
 }
 
 impl Collector for TopDocsCollector {
@@ -444,7 +449,7 @@ impl Collector for TopDocsCollector {
             while let Some(doc_id) = docs.next_doc().unwrap() {
                 if !reader.deleted_docs().get(doc_id as usize).unwrap_or(false) {
                     let doc = doc_cursor.read_doc(doc_id).unwrap();
-                    self.docs.push(docs.score(), doc);
+                    self.heap.push(ScoredDoc{score: docs.score().unwrap(), doc});
                 }
             }
         }
