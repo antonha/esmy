@@ -409,6 +409,9 @@ impl ScoredDoc {
     pub fn doc(&self) -> &Doc {
         &self.doc
     }
+    pub fn score(&self) -> f32 {
+        self.score
+    }
 }
 
 impl Ord for ScoredDoc {
@@ -417,9 +420,7 @@ impl Ord for ScoredDoc {
     }
 }
 
-impl Eq for ScoredDoc {
-
-}
+impl Eq for ScoredDoc {}
 
 impl PartialOrd for ScoredDoc {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -429,12 +430,14 @@ impl PartialOrd for ScoredDoc {
 
 pub struct TopDocsCollector {
     heap: BinaryHeap<ScoredDoc>
+    num_docs: usize
 }
 
 impl TopDocsCollector {
     pub fn new(num_docs: usize) -> TopDocsCollector {
         TopDocsCollector {
-            heap: BinaryHeap::with_capacity(num_docs)
+            heap: BinaryHeap::with_capacity(num_docs),
+            num_docs,
         }
     }
 
@@ -449,7 +452,8 @@ impl Collector for TopDocsCollector {
             while let Some(doc_id) = docs.next_doc().unwrap() {
                 if !reader.deleted_docs().get(doc_id as usize).unwrap_or(false) {
                     let doc = doc_cursor.read_doc(doc_id).unwrap();
-                    self.heap.push(ScoredDoc{score: docs.score().unwrap(), doc});
+                    self.heap.push(ScoredDoc { score: docs.score().unwrap(), doc });
+                    self.heap.shrink_to(self.num_docs)
                 }
             }
         }
