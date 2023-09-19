@@ -16,6 +16,7 @@ use std::sync::RwLock;
 use bit_vec::BitVec;
 use num_cpus;
 use rand;
+use rand::distributions::{Alphanumeric};
 use rand::Rng;
 use rayon::prelude::*;
 use rmps;
@@ -415,7 +416,7 @@ impl Collector for DeletingCollector {
                 file.read_to_end(&mut buffer)?;
                 let mut existing = BitVec::from_bytes(&buffer);
                 existing.truncate(doc_count as usize);
-                existing.union(&to_delete);
+                existing.or(&to_delete);
                 existing
             }
             None => to_delete,
@@ -445,7 +446,12 @@ struct IndexState {
 }
 
 fn new_segment_address(path: &Path) -> SegmentAddress {
-    let name: String = rand::thread_rng().gen_ascii_chars().take(10).collect();
+
+    let name: String = rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(10)
+        .map(char::from)
+        .collect();
     SegmentAddress {
         path: PathBuf::from(path),
         name,

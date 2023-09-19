@@ -9,11 +9,12 @@ use std::io::Write;
 
 use bit_vec::BitVec;
 use fasthash::RandomState;
-use fasthash::sea::SeaHash;
+use fasthash::sea::Hash64;
 use fst::{self, Map, MapBuilder, Streamer};
 use fst::map::OpBuilder;
 use indexmap::IndexMap;
 use indexmap::map;
+use memmap::Mmap;
 
 use analyzis::Analyzer;
 use analyzis::NoopAnalyzer;
@@ -54,7 +55,7 @@ impl StringIndex {
     fn write_docs<'a>(&self, address: &FeatureAddress, docs: &'a [Doc]) -> Result<(), Error> {
         let analyzer = &self.analyzer;
         let field_name = &self.field_name;
-        let s = RandomState::<SeaHash>::new();
+        let s = RandomState::<Hash64>::new();
         let mut map = IndexMap::with_hasher(s);
 
         for (doc_id, doc) in docs.iter().enumerate() {
@@ -146,11 +147,12 @@ impl Feature for StringIndex {
     fn reader(&self, address: &FeatureAddress) -> Result<Box<dyn FeatureReader>, Error> {
         let path = address.with_ending(TERM_ID_LISTING);
         if path.exists() {
+            let mmap = unsafe { Mmap::map(&File::open(path)?)? };
             Ok(Box::new({
                 StringIndexReader {
                     feature: self.clone(),
                     address: address.clone(),
-                    map: Some(unsafe { Map::from_path(path)? }),
+                    map: Some( Map::new(mmap)? ),
                 }
             }))
         } else {
@@ -193,8 +195,8 @@ impl Feature for StringIndex {
             for (old_address, old_info, deleted_docs) in old_segments {
                 let old_terms_path = old_address.with_ending(&TERM_ID_LISTING);
                 if old_terms_path.exists() {
-                    let source_term = unsafe { Map::from_path(old_terms_path)? };
-                    source_terms.push(source_term);
+                    let mmap = unsafe { Mmap::map(&File::open(old_terms_path)?)? };
+                    source_terms.push(Map::new(mmap)?);
                     source_postings.push(BufReader::new(File::open(
                         old_address.with_ending(ID_DOC_LISTING),
                     )?));
@@ -273,7 +275,7 @@ impl Feature for StringIndex {
 pub struct StringIndexReader {
     pub feature: StringIndex,
     pub address: FeatureAddress,
-    pub map: Option<Map>,
+    pub map: Option<Map<Mmap>>,
 }
 
 impl FeatureReader for StringIndexReader {

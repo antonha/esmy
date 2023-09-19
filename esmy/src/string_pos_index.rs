@@ -8,12 +8,13 @@ use std::io::SeekFrom;
 use std::io::Write;
 
 use bit_vec::BitVec;
-use fasthash::sea::SeaHash;
 use fasthash::RandomState;
+use fasthash::sea::Hash64;
 use fst::map::OpBuilder;
 use fst::{Map, MapBuilder, Streamer};
 use indexmap::map;
 use indexmap::IndexMap;
+use memmap::Mmap;
 use smallvec::SmallVec;
 
 use analyzis::Analyzer;
@@ -57,7 +58,7 @@ impl StringPosIndex {
     fn write_docs<'a>(&self, address: &FeatureAddress, docs: &'a [Doc]) -> Result<(), Error> {
         let analyzer = &self.analyzer;
         let field_name = &self.field_name;
-        let s = RandomState::<SeaHash>::new();
+        let s = RandomState::<Hash64>::new();
         let mut map = IndexMap::with_hasher(s);
         for (doc_id, doc) in docs.iter().enumerate() {
             for (_name, val) in doc.iter().filter(|e| e.0 == field_name) {
@@ -113,18 +114,18 @@ impl StringPosIndex {
             for (doc_id, positions) in doc_ids_and_pos {
                 id_offset += u64::from(write_vint(
                     &mut target_postings,
-                    (doc_id - prev_doc_id) as u64,
+                    doc_id - prev_doc_id,
                 )?);
                 id_offset += u64::from(write_vint(
                     &mut target_postings,
-                    (pos_offset - prev_pos_offset) as u64,
+                    pos_offset - prev_pos_offset,
                 )?);
                 prev_pos_offset = pos_offset;
                 pos_offset += u64::from(write_vint(&mut target_positions, positions.len() as u64)?);
                 let mut last_pos = 0u64;
                 for pos in positions {
                     pos_offset +=
-                        u64::from(write_vint(&mut target_positions, (pos - last_pos) as u64)?);
+                        u64::from(write_vint(&mut target_positions, pos - last_pos)?);
                     last_pos = pos;
                 }
                 prev_doc_id = doc_id;
@@ -181,11 +182,12 @@ impl Feature for StringPosIndex {
     fn reader(&self, address: &FeatureAddress) -> Result<Box<dyn FeatureReader>, Error> {
         let path = address.with_ending(TERM_ID_LISTING);
         if path.exists() {
+            let mmap = unsafe { Mmap::map(&File::open(path)?)? };
             Ok(Box::new({
                 StringPosIndexReader {
                     feature: self.clone(),
                     address: address.clone(),
-                    map: Some(unsafe { Map::from_path(path)? }),
+                    map: Some(Map::new(mmap)?),
                 }
             }))
         } else {
@@ -229,7 +231,8 @@ impl Feature for StringPosIndex {
             for (old_address, old_info, deleted_docs) in old_segments {
                 let source_terms_path = old_address.with_ending(&TERM_ID_LISTING);
                 if source_terms_path.exists() {
-                    source_maps.push(unsafe { Map::from_path(source_terms_path)? });
+                    let mmap = unsafe { Mmap::map(&File::open(source_terms_path)?)? };
+                    source_maps.push(Map::new(mmap)?);
                     source_postings.push(BufReader::new(File::open(
                         old_address.with_ending(ID_DOC_LISTING),
                     )?));
@@ -269,7 +272,7 @@ impl Feature for StringPosIndex {
 
             for term_offset in sorted_offsets {
                 let mut source_posting = &mut source_postings[term_offset.index];
-                source_posting.seek(SeekFrom::Start(term_offset.value as u64))?;
+                source_posting.seek(SeekFrom::Start(term_offset.value))?;
                 let source_position = &mut source_positions[term_offset.index];
 
                 let term_doc_count = read_vint(source_posting)?;
@@ -339,9 +342,9 @@ impl Feature for StringPosIndex {
         target_postings.flush()?;
         target_positions.flush()?;
         if !has_written {
-            ::std::fs::remove_file(target_map_path)?;
-            ::std::fs::remove_file(target_postings_path)?;
-            ::std::fs::remove_file(target_positions_path)?;
+            std::fs::remove_file(target_map_path)?;
+            std::fs::remove_file(target_postings_path)?;
+            std::fs::remove_file(target_positions_path)?;
         }
         Ok(())
     }
@@ -350,7 +353,7 @@ impl Feature for StringPosIndex {
 pub struct StringPosIndexReader {
     pub feature: StringPosIndex,
     pub address: FeatureAddress,
-    pub map: Option<Map>,
+    pub map: Option<Map<Mmap>>,
 }
 
 impl FeatureReader for StringPosIndexReader {
@@ -367,7 +370,7 @@ impl StringPosIndexReader {
             Some(offset) => {
                 let mut iddoc =
                     BufReader::new(File::open(self.address.with_ending(ID_DOC_LISTING))?);
-                iddoc.seek(SeekFrom::Start(offset as u64))?;
+                iddoc.seek(SeekFrom::Start(offset))?;
                 let num = read_vint(&mut iddoc)?;
                 let pos = BufReader::new(File::open(self.address.with_ending("pos"))?);
                 Ok(Some(TermDocSpansIter {

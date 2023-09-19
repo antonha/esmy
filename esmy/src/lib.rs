@@ -94,11 +94,11 @@ extern crate serde_derive;
 extern crate lz4;
 
 #[cfg(test)]
-#[macro_use]
 extern crate proptest;
 
 #[macro_use]
 extern crate lazy_static;
+extern crate memmap;
 
 pub mod analyzis;
 pub mod doc;
