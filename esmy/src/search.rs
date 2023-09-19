@@ -20,7 +20,7 @@ use super::Error;
 pub fn search(
     index_reader: &ManagedIndexReader,
     query: &impl Query,
-    collector: &mut Collector,
+    collector: &mut dyn Collector,
 ) -> Result<(), Error> {
     for segment_reader in index_reader.segment_readers() {
         if let Some(mut disi) = query.segment_matches(&segment_reader)? {
@@ -31,13 +31,13 @@ pub fn search(
 }
 
 pub trait Query: QueryClone + Debug + Sync {
-    fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<DocIter>>, Error>;
+    fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<dyn DocIter>>, Error>;
     fn matches(&self, doc: &Doc) -> bool;
-    fn as_any(&self) -> &Any;
+    fn as_any(&self) -> &dyn Any;
 }
 
-impl Query for Box<Query> {
-    fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<DocIter>>, Error> {
+impl Query for Box<dyn Query> {
+    fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<dyn DocIter>>, Error> {
         self.as_ref().segment_matches(reader)
     }
 
@@ -45,26 +45,26 @@ impl Query for Box<Query> {
         self.as_ref().matches(doc)
     }
 
-    fn as_any(&self) -> &Any {
+    fn as_any(&self) -> &dyn Any {
         &*self
     }
 }
 
 pub trait QueryClone {
-    fn clone_box(&self) -> Box<Query>;
+    fn clone_box(&self) -> Box<dyn Query>;
 }
 
 impl<T> QueryClone for T
 where
     T: 'static + Query + Clone,
 {
-    fn clone_box(&self) -> Box<Query> {
+    fn clone_box(&self) -> Box<dyn Query> {
         Box::new(self.clone())
     }
 }
 
-impl Clone for Box<Query> {
-    fn clone(&self) -> Box<Query> {
+impl Clone for Box<dyn Query> {
+    fn clone(&self) -> Box<dyn Query> {
         (**self).clone_box()
     }
 }
@@ -97,7 +97,7 @@ impl<'a> ValueQuery {
 }
 
 impl<'a> Query for ValueQuery {
-    fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<DocIter>>, Error> {
+    fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<dyn DocIter>>, Error> {
         match reader.string_index(&self.field, &NoopAnalyzer) {
             Some(index) => match index.doc_iter(&self.value)? {
                 Some(iter) => Ok(Some(Box::from(iter))),
@@ -114,7 +114,7 @@ impl<'a> Query for ValueQuery {
         }
     }
 
-    fn as_any(&self) -> &Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }
@@ -137,7 +137,7 @@ impl TermQuery {
 }
 
 impl Query for TermQuery {
-    fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<DocIter>>, Error> {
+    fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<dyn DocIter>>, Error> {
         match reader.string_index(&self.field, &*self.analyzer) {
             Some(index) => match index.doc_iter(&self.value)? {
                 Some(iter) => Ok(Some(Box::from(iter))),
@@ -156,7 +156,7 @@ impl Query for TermQuery {
         }
     }
 
-    fn as_any(&self) -> &Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }
@@ -166,11 +166,11 @@ pub struct TextQuery {
     field: String,
     values: Vec<String>,
     //TODO: Cow<str> instead?
-    analyzer: Box<Analyzer>,
+    analyzer: Box<dyn Analyzer>,
 }
 
 impl TextQuery {
-    pub fn new<N, V>(field: N, value: V, analyzer: Box<Analyzer>) -> TextQuery
+    pub fn new<N, V>(field: N, value: V, analyzer: Box<dyn Analyzer>) -> TextQuery
     where
         N: Into<String>,
         V: Into<String>,
@@ -189,7 +189,7 @@ impl TextQuery {
 }
 
 impl Query for TextQuery {
-    fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<DocIter>>, Error> {
+    fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<dyn DocIter>>, Error> {
         if self.values.len() == 1 {
             if let Some(string_index_reader) = reader.string_index(&self.field, &*self.analyzer) {
                 match string_index_reader.doc_iter(&self.values[0])? {
@@ -223,16 +223,16 @@ impl Query for TextQuery {
             let mut sub_spans = Vec::new();
             for v in &self.values {
                 if let Some(sub_span) = string_pos_reader.doc_spans_iter(&v)? {
-                    sub_spans.push(Box::new(sub_span) as Box<DocSpansIter>);
+                    sub_spans.push(Box::new(sub_span) as Box<dyn DocSpansIter>);
                 } else {
                     return Ok(None);
                 }
             }
             return Ok(Some(
-                Box::new(OrderedNearDocSpansIter::new(sub_spans)) as Box<DocIter>
+                Box::new(OrderedNearDocSpansIter::new(sub_spans)) as Box<dyn DocIter>
             ));
         } else if let Some(string_reader) = reader.string_index(&self.field, &*self.analyzer) {
-            let mut sub: Vec<Box<DocIter>> = Vec::with_capacity(self.values.len());
+            let mut sub: Vec<Box<dyn DocIter>> = Vec::with_capacity(self.values.len());
             for v in &self.values {
                 match string_reader.doc_iter(&v)? {
                     Some(iter) => sub.push(Box::new(iter)),
@@ -272,7 +272,7 @@ impl Query for TextQuery {
         }
     }
 
-    fn as_any(&self) -> &Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }
@@ -287,7 +287,7 @@ impl MatchAllDocsQuery {
 }
 
 impl Query for MatchAllDocsQuery {
-    fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<DocIter>>, Error> {
+    fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<dyn DocIter>>, Error> {
         Ok(Some(Box::new(AllDocsDocIter::new(reader.info().doc_count))))
     }
 
@@ -295,25 +295,25 @@ impl Query for MatchAllDocsQuery {
         true
     }
 
-    fn as_any(&self) -> &Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct AllQuery {
-    queries: Vec<Box<Query>>,
+    queries: Vec<Box<dyn Query>>,
 }
 
 impl AllQuery {
-    pub fn new(queries: Vec<Box<Query>>) -> AllQuery {
+    pub fn new(queries: Vec<Box<dyn Query>>) -> AllQuery {
         AllQuery { queries }
     }
 }
 
 impl Query for AllQuery {
-    fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<DocIter>>, Error> {
-        let mut sub: Vec<Box<DocIter>> = Vec::with_capacity(self.queries.len());
+    fn segment_matches(&self, reader: &SegmentReader) -> Result<Option<Box<dyn DocIter>>, Error> {
+        let mut sub: Vec<Box<dyn DocIter>> = Vec::with_capacity(self.queries.len());
         for q in &self.queries {
             match q.segment_matches(reader)? {
                 Some(sub_iter) => sub.push(sub_iter),
@@ -332,13 +332,13 @@ impl Query for AllQuery {
         true
     }
 
-    fn as_any(&self) -> &Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }
 
 pub trait Collector: Sync {
-    fn collect_for(&mut self, reader: &SegmentReader, docs: &mut DocIter) -> Result<(), Error>;
+    fn collect_for(&mut self, reader: &SegmentReader, docs: &mut dyn DocIter) -> Result<(), Error>;
 }
 
 #[derive(Default)]
@@ -357,7 +357,7 @@ impl CountCollector {
 }
 
 impl Collector for CountCollector {
-    fn collect_for(&mut self, _reader: &SegmentReader, docs: &mut DocIter) -> Result<(), Error> {
+    fn collect_for(&mut self, _reader: &SegmentReader, docs: &mut dyn DocIter) -> Result<(), Error> {
         let mut i = 0u64;
         while let Some(_doc_id) = docs.next_doc()? {
             i += 1;
@@ -383,7 +383,7 @@ impl AllDocsCollector {
 }
 
 impl Collector for AllDocsCollector {
-    fn collect_for(&mut self, reader: &SegmentReader, docs: &mut DocIter) -> Result<(), Error> {
+    fn collect_for(&mut self, reader: &SegmentReader, docs: &mut dyn DocIter) -> Result<(), Error> {
         if let Some(mut doc_cursor) = reader.full_doc().unwrap().cursor()? {
             while let Some(doc_id) = docs.next_doc().unwrap() {
                 if !reader.deleted_docs().get(doc_id as usize).unwrap_or(false) {

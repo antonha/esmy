@@ -38,11 +38,11 @@ const ID_DOC_LISTING: &str = "iddoc";
 #[derive(Clone)]
 pub struct StringIndex {
     pub field_name: String,
-    pub analyzer: Box<Analyzer>,
+    pub analyzer: Box<dyn Analyzer>,
 }
 
 impl StringIndex {
-    pub fn new(field_name: String, analyzer: Box<Analyzer>) -> StringIndex {
+    pub fn new(field_name: String, analyzer: Box<dyn Analyzer>) -> StringIndex {
         StringIndex {
             field_name,
             analyzer,
@@ -110,7 +110,7 @@ impl Feature for StringIndex {
     fn from_config(config: FeatureConfig) -> Self {
         let field_name = config.str_at("field").unwrap().to_string();
         let analyzer_name = config.str_at("analyzer").unwrap();
-        let analyzer: Box<Analyzer> = match analyzer_name {
+        let analyzer: Box<dyn Analyzer> = match analyzer_name {
             "uax29" => Box::new(UAX29Analyzer),
             "whitespace" => Box::new(WhiteSpaceAnalyzer),
             "noop" => Box::new(NoopAnalyzer),
@@ -135,7 +135,7 @@ impl Feature for StringIndex {
         FeatureConfig::Map(map)
     }
 
-    fn as_any(&self) -> &Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 
@@ -143,7 +143,7 @@ impl Feature for StringIndex {
         self.write_docs(address, docs)
     }
 
-    fn reader(&self, address: &FeatureAddress) -> Result<Box<FeatureReader>, Error> {
+    fn reader(&self, address: &FeatureAddress) -> Result<Box<dyn FeatureReader>, Error> {
         let path = address.with_ending(TERM_ID_LISTING);
         if path.exists() {
             Ok(Box::new({
@@ -277,7 +277,7 @@ pub struct StringIndexReader {
 }
 
 impl FeatureReader for StringIndexReader {
-    fn as_any(&self) -> &Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }

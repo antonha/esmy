@@ -3,7 +3,7 @@ use std::io::Read;
 use std::io::Write;
 
 #[inline]
-pub fn write_vint(write: &mut Write, mut value: u64) -> Result<u32, Error> {
+pub fn write_vint(write: &mut dyn Write, mut value: u64) -> Result<u32, Error> {
     let mut count = 1;
     while (value & !0x7F) != 0 {
         write.write_all(&[((value & 0x7F) | 0x80) as u8])?;
@@ -15,7 +15,7 @@ pub fn write_vint(write: &mut Write, mut value: u64) -> Result<u32, Error> {
 }
 
 #[inline]
-pub fn read_vint(read: &mut Read) -> Result<u64, Error> {
+pub fn read_vint(read: &mut dyn Read) -> Result<u64, Error> {
     let mut buf = [1];
     read.read_exact(&mut buf)?;
     let mut res: u64 = u64::from(buf[0] & 0x7F);

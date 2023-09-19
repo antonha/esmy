@@ -23,13 +23,13 @@ pub enum IndexOperation {
     ReOpen,
     Merge,
     ForceMerge,
-    Delete(Box<Query>),
+    Delete(Box<dyn Query>),
 }
 
 pub fn index_and_assert_search_matches(
     schema: &SegmentSchema,
     ops: &[IndexOperation],
-    queries: &[Box<Query>],
+    queries: &[Box<dyn Query>],
 ) {
     let index_dir = TempDir::new().unwrap();
     {
@@ -96,7 +96,7 @@ impl IndexTestState {
                         .auto_merge(false)
                         .open(self.index_path.clone())
                         .expect("Could not re-open index.");
-                    ::std::mem::replace(&mut self.index, index);
+                    let _ = ::std::mem::replace(&mut self.index, index);
                     self.in_mem_docs.append(&mut self.in_mem_seg_docs);
                     self.in_mem_seg_docs = Vec::new();
                 }
@@ -104,7 +104,7 @@ impl IndexTestState {
         }
     }
 
-    fn check_queries_match_same(&self, queries: &[Box<Query>]) {
+    fn check_queries_match_same(&self, queries: &[Box<dyn Query>]) {
         let reader = self.index.open_reader().unwrap();
         let retained_docs: Vec<Doc> = self
             .in_mem_docs
@@ -125,24 +125,24 @@ impl IndexTestState {
     }
 }
 
-fn assert_same_docs(query: &Query, expected: &[Doc], actual: &[Doc]) {
+fn assert_same_docs(query: &dyn Query, expected: &[Doc], actual: &[Doc]) {
     if expected != actual {
         for doc in expected {
             assert!(
                 actual.contains(doc),
-                format!(
+                
                     "Actual = {:?} did not contain {:?} for query {:?}",
                     actual, doc, query
-                )
+                
             )
         }
         for doc in actual {
             assert!(
                 expected.contains(doc),
-                format!(
+                
                     "Expected = {:?} did not contain {:?} for query {:?}",
                     expected, doc, query
-                )
+                
             )
         }
     }
@@ -154,9 +154,9 @@ pub fn do_gen<Q>(
     doc_strategy: BoxedStrategy<Doc>,
     num_queries: impl Into<SizeRange>,
     query_strategy: Q,
-) -> BoxedStrategy<(Vec<IndexOperation>, Vec<Box<Query>>)>
+) -> BoxedStrategy<(Vec<IndexOperation>, Vec<Box<dyn Query>>)>
 where
-    Q: Fn(&[&Doc]) -> BoxedStrategy<Box<Query>> + 'static + Copy,
+    Q: Fn(&[&Doc]) -> BoxedStrategy<Box<dyn Query>> + 'static + Copy,
 {
     let num_q = num_queries.into();
     let qs = query_strategy;
@@ -176,7 +176,7 @@ fn arb_index_ops<Q>(
     query_gen: Q,
 ) -> BoxedStrategy<Vec<IndexOperation>>
 where
-    Q: Fn(&[&Doc]) -> BoxedStrategy<Box<Query>> + 'static + Copy,
+    Q: Fn(&[&Doc]) -> BoxedStrategy<Box<dyn Query>> + 'static + Copy,
 {
     Just(Vec::new())
         .prop_recursive(num_ops, num_ops, 1, move |vec| {
@@ -226,7 +226,7 @@ fn add_delete_op<Q>(
     query_gen: Q,
 ) -> BoxedStrategy<Vec<IndexOperation>>
 where
-    Q: Fn(&[&Doc]) -> BoxedStrategy<Box<Query>> + 'static,
+    Q: Fn(&[&Doc]) -> BoxedStrategy<Box<dyn Query>> + 'static,
 {
     input
         .prop_flat_map(move |v| {

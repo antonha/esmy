@@ -40,7 +40,7 @@ pub fn run(argv: &[&str]) -> Result<(), Error> {
         .and_then(|d| d.argv(argv.iter().map(|&x| x)).deserialize())
         .unwrap_or_else(|e| e.exit());
     let index_path = PathBuf::from(args.flag_path.clone());
-    let analyzer = Analyzer::for_name(&args.flag_analyzer.unwrap());
+    let analyzer = <dyn Analyzer>::for_name(&args.flag_analyzer.unwrap());
     let query_string = args.arg_query;
     let query = parse_query(&query_string, analyzer);
 
@@ -51,7 +51,7 @@ pub fn run(argv: &[&str]) -> Result<(), Error> {
     Ok(())
 }
 
-fn parse_query(query_string: &str, analyzer: Box<Analyzer>) -> TextQuery {
+fn parse_query(query_string: &str, analyzer: Box<dyn Analyzer>) -> TextQuery {
     let split: Vec<&str> = query_string.split(':').collect();
     TextQuery::new(split[0].to_string(), split[1].to_string(), analyzer)
 }
@@ -65,7 +65,7 @@ impl PrintAllCollector {
 }
 
 impl Collector for PrintAllCollector {
-    fn collect_for(&mut self, reader: &SegmentReader, docs: &mut DocIter) -> Result<(), Error> {
+    fn collect_for(&mut self, reader: &SegmentReader, docs: &mut dyn DocIter) -> Result<(), Error> {
         if let Some(mut doc_cursor) = reader.full_doc().unwrap().cursor()? {
             while let Some(doc_id) = docs.next_doc()? {
                 if !reader.deleted_docs().get(doc_id as usize).unwrap_or(false) {

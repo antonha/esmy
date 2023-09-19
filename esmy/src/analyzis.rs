@@ -5,11 +5,11 @@ use unicode_segmentation::UnicodeSegmentation;
 
 pub trait Analyzer: AnalyzerClone + Send + Sync + Debug {
     fn analyzer_type(&self) -> &'static str;
-    fn analyze<'a>(&self, value: &'a str) -> Box<Iterator<Item = Cow<'a, str>> + 'a>;
+    fn analyze<'a>(&self, value: &'a str) -> Box<dyn Iterator<Item = Cow<'a, str>> + 'a>;
 }
 
-impl Analyzer {
-    pub fn for_name(name: &str) -> Box<Analyzer> {
+impl dyn Analyzer {
+    pub fn for_name(name: &str) -> Box<dyn Analyzer> {
         match name {
             "uax29" => Box::new(UAX29Analyzer),
             "whitespace" => Box::new(WhiteSpaceAnalyzer),
@@ -20,20 +20,20 @@ impl Analyzer {
 }
 
 pub trait AnalyzerClone {
-    fn clone_box(&self) -> Box<Analyzer>;
+    fn clone_box(&self) -> Box<dyn Analyzer>;
 }
 
 impl<T> AnalyzerClone for T
 where
     T: 'static + Analyzer + Clone,
 {
-    fn clone_box(&self) -> Box<Analyzer> {
+    fn clone_box(&self) -> Box<dyn Analyzer> {
         Box::new(self.clone())
     }
 }
 
-impl Clone for Box<Analyzer> {
-    fn clone(&self) -> Box<Analyzer> {
+impl Clone for Box<dyn Analyzer> {
+    fn clone(&self) -> Box<dyn Analyzer> {
         self.clone_box()
     }
 }
@@ -56,7 +56,7 @@ impl Analyzer for UAX29Analyzer {
         "uax29"
     }
 
-    fn analyze<'a>(&self, value: &'a str) -> Box<Iterator<Item = Cow<'a, str>> + 'a> {
+    fn analyze<'a>(&self, value: &'a str) -> Box<dyn Iterator<Item = Cow<'a, str>> + 'a> {
         Box::from(
             value
                 .split_word_bounds()
@@ -99,7 +99,7 @@ impl Analyzer for WhiteSpaceAnalyzer {
         "whitespace"
     }
 
-    fn analyze<'a>(&self, value: &'a str) -> Box<Iterator<Item = Cow<'a, str>> + 'a> {
+    fn analyze<'a>(&self, value: &'a str) -> Box<dyn Iterator<Item = Cow<'a, str>> + 'a> {
         Box::from(value.split_whitespace().map(|s| Cow::Borrowed(s)))
     }
 }
@@ -122,7 +122,7 @@ impl Analyzer for NoopAnalyzer {
         "noop"
     }
 
-    fn analyze<'a>(&self, value: &'a str) -> Box<Iterator<Item = Cow<'a, str>> + 'a> {
+    fn analyze<'a>(&self, value: &'a str) -> Box<dyn Iterator<Item = Cow<'a, str>> + 'a> {
         Box::from(iter::once(Cow::Borrowed(value)))
     }
 }

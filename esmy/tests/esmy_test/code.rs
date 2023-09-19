@@ -3,7 +3,7 @@ use esmy::search::Query;
 use esmy::Doc;
 use esmy_test::IndexOperation;
 
-pub fn format_input(input: &(Vec<IndexOperation>, Vec<Box<Query>>)) -> String {
+pub fn format_input(input: &(Vec<IndexOperation>, Vec<Box<dyn Query>>)) -> String {
     let mut to_print = String::new();
     to_print.push_str(&format!(
         "
@@ -87,7 +87,7 @@ fn format_doc(doc: &Doc) -> String {
     ret
 }
 
-fn format_queries<'a>(queries: &'a [Box<Query>]) -> String {
+fn format_queries<'a>(queries: &'a [Box<dyn Query>]) -> String {
     format!(
         "vec![{}]",
         queries
@@ -98,6 +98,6 @@ fn format_queries<'a>(queries: &'a [Box<Query>]) -> String {
     )
 }
 
-fn format_query(query: &Box<Query>) -> String {
+fn format_query(query: &Box<dyn Query>) -> String {
     format!("{:?}", query)
 }

@@ -33,12 +33,12 @@ pub trait DocSpansIter: DocIter {
 }
 
 pub struct AllDocIter {
-    sub: Vec<Box<DocIter>>,
+    sub: Vec<Box<dyn DocIter>>,
     current_doc: Option<DocId>,
 }
 
 impl AllDocIter {
-    pub fn new(sub: Vec<Box<DocIter>>) -> AllDocIter {
+    pub fn new(sub: Vec<Box<dyn DocIter>>) -> AllDocIter {
         AllDocIter {
             sub,
             current_doc: None,
@@ -123,14 +123,14 @@ impl DocIter for AllDocsDocIter {
 }
 
 pub struct OrderedNearDocSpansIter {
-    sub_spans: Vec<Box<DocSpansIter>>,
+    sub_spans: Vec<Box<dyn DocSpansIter>>,
     current_doc: Option<DocId>,
     position_queue: VecDeque<Position>,
     current_position: Option<Position>,
 }
 
 impl OrderedNearDocSpansIter {
-    pub fn new(sub_spans: Vec<Box<DocSpansIter>>) -> OrderedNearDocSpansIter {
+    pub fn new(sub_spans: Vec<Box<dyn DocSpansIter>>) -> OrderedNearDocSpansIter {
         OrderedNearDocSpansIter {
             sub_spans,
             current_doc: None,
@@ -199,7 +199,7 @@ impl DocSpansIter for OrderedNearDocSpansIter {
     }
 }
 
-fn conjunction_advance(iters: &mut [Box<DocIter>]) -> Result<Option<DocId>, Error> {
+fn conjunction_advance(iters: &mut [Box<dyn DocIter>]) -> Result<Option<DocId>, Error> {
     let size = iters.len();
     let mut target = {
         let s = &mut iters[0];
@@ -238,7 +238,7 @@ fn conjunction_advance(iters: &mut [Box<DocIter>]) -> Result<Option<DocId>, Erro
 }
 
 //Same as above, can't figure out how to cast..
-fn conjunction_advance_span(iters: &mut [Box<DocSpansIter>]) -> Result<Option<DocId>, Error> {
+fn conjunction_advance_span(iters: &mut [Box<dyn DocSpansIter>]) -> Result<Option<DocId>, Error> {
     let size = iters.len();
     let mut target = {
         let s = &mut iters[0];

@@ -402,7 +402,7 @@ impl DeletingCollector {
 }
 
 impl Collector for DeletingCollector {
-    fn collect_for(&mut self, reader: &SegmentReader, docs: &mut DocIter) -> Result<(), Error> {
+    fn collect_for(&mut self, reader: &SegmentReader, docs: &mut dyn DocIter) -> Result<(), Error> {
         let doc_count = reader.info().doc_count;
         let mut to_delete = BitVec::from_elem(doc_count as usize, false);
         while let Some(doc_id) = docs.next_doc()? {
@@ -462,7 +462,7 @@ impl ManagedIndexReader {
         &self.readers
     }
 
-    pub fn search(&self, query: &impl Query, collector: &mut Collector) -> Result<(), Error> {
+    pub fn search(&self, query: &impl Query, collector: &mut dyn Collector) -> Result<(), Error> {
         search::search(self, query, collector)
     }
 }

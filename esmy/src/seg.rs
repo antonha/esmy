@@ -65,13 +65,13 @@ impl FeatureConfig {
 pub trait Feature: FeatureClone + Sync + Send {
     fn feature_type(&self) -> &'static str;
     //TODO add error for faulty configs
-    fn from_config(FeatureConfig) -> Self
+    fn from_config(_: FeatureConfig) -> Self
     where
         Self: Sized;
     fn to_config(&self) -> FeatureConfig;
-    fn as_any(&self) -> &Any;
+    fn as_any(&self) -> &dyn Any;
     fn write_segment(&self, address: &FeatureAddress, docs: &[Doc]) -> Result<(), Error>;
-    fn reader(&self, address: &FeatureAddress) -> Result<Box<FeatureReader>, Error>;
+    fn reader(&self, address: &FeatureAddress) -> Result<Box<dyn FeatureReader>, Error>;
     fn merge_segments(
         &self,
         old_segments: &[(FeatureAddress, SegmentInfo, BitVec)],
@@ -80,24 +80,24 @@ pub trait Feature: FeatureClone + Sync + Send {
 }
 
 pub trait FeatureReader: Sync + Send {
-    fn as_any(&self) -> &Any;
+    fn as_any(&self) -> &dyn Any;
 }
 
 pub trait FeatureClone {
-    fn clone_box(&self) -> Box<Feature>;
+    fn clone_box(&self) -> Box<dyn Feature>;
 }
 
 impl<T> FeatureClone for T
 where
     T: 'static + Feature + Clone,
 {
-    fn clone_box(&self) -> Box<Feature> {
+    fn clone_box(&self) -> Box<dyn Feature> {
         Box::new(self.clone())
     }
 }
 
-impl Clone for Box<Feature> {
-    fn clone(&self) -> Box<Feature> {
+impl Clone for Box<dyn Feature> {
+    fn clone(&self) -> Box<dyn Feature> {
         self.clone_box()
     }
 }
@@ -122,12 +122,12 @@ pub struct SegmentMeta {
 
 #[derive(Clone)]
 pub struct SegmentSchema {
-    pub features: HashMap<String, Box<Feature>>,
+    pub features: HashMap<String, Box<dyn Feature>>,
 }
 
 #[derive(Default)]
 pub struct SegmentSchemaBuilder {
-    features: HashMap<String, Box<Feature>>,
+    features: HashMap<String, Box<dyn Feature>>,
 }
 
 impl SegmentSchemaBuilder {
@@ -137,12 +137,12 @@ impl SegmentSchemaBuilder {
         }
     }
 
-    pub fn add_feature<N: Into<String>>(mut self, name: N, feature: Box<Feature>) -> Self {
+    pub fn add_feature<N: Into<String>>(mut self, name: N, feature: Box<dyn Feature>) -> Self {
         self.features.insert(name.into(), feature);
         self
     }
 
-    pub fn add_string_index<N, F>(mut self, name: N, field: F, analyzer: Box<Analyzer>) -> Self
+    pub fn add_string_index<N, F>(mut self, name: N, field: F, analyzer: Box<dyn Analyzer>) -> Self
     where
         N: Into<String>,
         F: Into<String>,
@@ -154,7 +154,7 @@ impl SegmentSchemaBuilder {
         self
     }
 
-    pub fn add_string_pos_index<N, F>(mut self, name: N, field: F, analyzer: Box<Analyzer>) -> Self
+    pub fn add_string_pos_index<N, F>(mut self, name: N, field: F, analyzer: Box<dyn Analyzer>) -> Self
     where
         N: Into<String>,
         F: Into<String>,
@@ -232,7 +232,7 @@ impl SegmentInfo {
 pub fn schema_from_metas(feature_metas: HashMap<String, FeatureMeta>) -> SegmentSchema {
     let mut features = HashMap::new();
     for (name, feature_meta) in feature_metas {
-        let feature: Box<Feature> = match feature_meta.ftype.as_ref() {
+        let feature: Box<dyn Feature> = match feature_meta.ftype.as_ref() {
             "full_doc" => Box::new(FullDoc::from_config(feature_meta.config)),
             "string_index" => Box::new(StringIndex::from_config(feature_meta.config)),
             "string_pos_index" => Box::new(StringPosIndex::from_config(feature_meta.config)),
@@ -373,12 +373,12 @@ pub fn merge(
 ) -> Result<(), Error> {
     let mut infos: Vec<SegmentInfo> = Vec::with_capacity(addresses.len());
     for address in addresses {
-        let mut seg_file = address.open_file("seg")?;
+        let seg_file = address.open_file("seg")?;
         let segment_meta: SegmentMeta = rmps::from_read(seg_file)?;
 
         let mut features = HashMap::new();
         for (name, feature_meta) in segment_meta.feature_metas {
-            let feature: Box<Feature> = match feature_meta.ftype.as_ref() {
+            let feature: Box<dyn Feature> = match feature_meta.ftype.as_ref() {
                 "full_doc" => Box::new(FullDoc::from_config(feature_meta.config)),
                 "string_index" => Box::new(StringIndex::from_config(feature_meta.config)),
                 "string_pos_index" => Box::new(StringPosIndex::from_config(feature_meta.config)),
@@ -447,7 +447,7 @@ pub struct SegmentReader {
     //address: SegmentAddress,
     info: SegmentInfo,
     deleted_docs: BitVec,
-    readers: HashMap<String, Box<FeatureReader>>,
+    readers: HashMap<String, Box<dyn FeatureReader>>,
 }
 
 impl SegmentReader {
@@ -479,7 +479,7 @@ impl SegmentReader {
     pub fn string_index(
         &self,
         field_name: &str,
-        analyzer: &Analyzer,
+        analyzer: &dyn Analyzer,
     ) -> Option<&StringIndexReader> {
         for reader in self.readers.values() {
             if let Some(reader) = reader.as_any().downcast_ref::<StringIndexReader>() {
@@ -496,7 +496,7 @@ impl SegmentReader {
     pub fn string_pos_index(
         &self,
         field_name: &str,
-        analyzer: &Analyzer,
+        analyzer: &dyn Analyzer,
     ) -> Option<&StringPosIndexReader> {
         for reader in self.readers.values() {
             if let Some(reader) = reader.as_any().downcast_ref::<StringPosIndexReader>() {

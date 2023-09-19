@@ -41,11 +41,11 @@ const ID_DOC_LISTING: &str = "iddoc";
 #[derive(Clone)]
 pub struct StringPosIndex {
     pub field_name: String,
-    pub analyzer: Box<Analyzer>,
+    pub analyzer: Box<dyn Analyzer>,
 }
 
 impl StringPosIndex {
-    pub fn new(field_name: String, analyzer: Box<Analyzer>) -> StringPosIndex {
+    pub fn new(field_name: String, analyzer: Box<dyn Analyzer>) -> StringPosIndex {
         StringPosIndex {
             field_name,
             analyzer,
@@ -74,7 +74,7 @@ impl StringPosIndex {
                                     vacant.insert(doc_pos_vec);
                                 }
                                 map::Entry::Occupied(mut occupied) => {
-                                    let mut term_docs = occupied.get_mut();
+                                    let term_docs = occupied.get_mut();
                                     if term_docs.last().unwrap().0 == doc_id as u64 {
                                         term_docs.last_mut().unwrap().1.push(pos as u64);
                                     } else {
@@ -145,7 +145,7 @@ impl Feature for StringPosIndex {
     fn from_config(config: FeatureConfig) -> Self {
         let field_name = config.str_at("field").unwrap().to_string();
         let analyzer_name = config.str_at("analyzer").unwrap();
-        let analyzer: Box<Analyzer> = match analyzer_name {
+        let analyzer: Box<dyn Analyzer> = match analyzer_name {
             "uax29" => Box::new(UAX29Analyzer),
             "whitespace" => Box::new(WhiteSpaceAnalyzer),
             "noop" => Box::new(NoopAnalyzer),
@@ -170,7 +170,7 @@ impl Feature for StringPosIndex {
         FeatureConfig::Map(map)
     }
 
-    fn as_any(&self) -> &Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 
@@ -178,7 +178,7 @@ impl Feature for StringPosIndex {
         self.write_docs(address, docs)
     }
 
-    fn reader(&self, address: &FeatureAddress) -> Result<Box<FeatureReader>, Error> {
+    fn reader(&self, address: &FeatureAddress) -> Result<Box<dyn FeatureReader>, Error> {
         let path = address.with_ending(TERM_ID_LISTING);
         if path.exists() {
             Ok(Box::new({
@@ -270,7 +270,7 @@ impl Feature for StringPosIndex {
             for term_offset in sorted_offsets {
                 let mut source_posting = &mut source_postings[term_offset.index];
                 source_posting.seek(SeekFrom::Start(term_offset.value as u64))?;
-                let mut source_position = &mut source_positions[term_offset.index];
+                let source_position = &mut source_positions[term_offset.index];
 
                 let term_doc_count = read_vint(source_posting)?;
 
@@ -354,7 +354,7 @@ pub struct StringPosIndexReader {
 }
 
 impl FeatureReader for StringPosIndexReader {
-    fn as_any(&self) -> &Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }
@@ -369,7 +369,7 @@ impl StringPosIndexReader {
                     BufReader::new(File::open(self.address.with_ending(ID_DOC_LISTING))?);
                 iddoc.seek(SeekFrom::Start(offset as u64))?;
                 let num = read_vint(&mut iddoc)?;
-                let mut pos = BufReader::new(File::open(self.address.with_ending("pos"))?);
+                let pos = BufReader::new(File::open(self.address.with_ending("pos"))?);
                 Ok(Some(TermDocSpansIter {
                     doc_file: iddoc,
                     pos_file: pos,

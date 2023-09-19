@@ -6,7 +6,7 @@ use std::convert::From;
 #[derive(Debug)]
 pub enum Error {
     IOError(std::io::Error),
-    Other(Box<std::error::Error + Send>),
+    Other(Box<dyn std::error::Error + Send>),
 }
 
 impl std::fmt::Display for Error {
@@ -19,14 +19,14 @@ impl std::fmt::Display for Error {
 }
 
 impl std::error::Error for Error {
-    fn description(&self) -> &str {
-        match *self {
-            Error::IOError(ref io) => io.description(),
-            Error::Other(ref other) => other.description(),
-        }
-    }
+    // fn description(&self) -> String {
+    //     match *self {
+    //         Error::IOError(ref io) => io.to_string(),
+    //         Error::Other(ref other) => other.to_string(),
+    //     }
+    // }
 
-    fn cause(&self) -> Option<&std::error::Error> {
+    fn cause(&self) -> Option<&dyn std::error::Error> {
         match *self {
             Error::IOError(ref io) => Some(io),
             Error::Other(ref other) => Some(&**other),

@@ -94,7 +94,7 @@ impl Feature for FullDoc {
         FeatureConfig::Map(map)
     }
 
-    fn as_any(&self) -> &Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 
@@ -127,7 +127,7 @@ impl Feature for FullDoc {
         Ok(())
     }
 
-    fn reader(&self, address: &FeatureAddress) -> Result<Box<FeatureReader>, Error> {
+    fn reader(&self, address: &FeatureAddress) -> Result<Box<dyn FeatureReader>, Error> {
         Ok(Box::new(FullDocReader {
             address: address.clone(),
         }))
@@ -190,7 +190,7 @@ impl Feature for FullDoc {
                             block_offset += 1;
                             //TODO max size
                             if false || block_offset % 4096 == 0 {
-                                let (mut tf, res) = encoder.finish();
+                                let (tf, res) = encoder.finish();
                                 res?;
                                 target_val_file = tf;
                                 target_val_file.flush()?;
@@ -200,7 +200,7 @@ impl Feature for FullDoc {
                             }
                         }
                     }
-                    let (mut tf, res) = encoder.finish();
+                    let (tf, res) = encoder.finish();
                     res?;
                     target_val_file = tf;
                     target_val_file.flush()?;
@@ -223,7 +223,7 @@ pub struct FullDocReader {
 }
 
 impl FeatureReader for FullDocReader {
-    fn as_any(&self) -> &Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }
